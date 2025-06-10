@@ -2,12 +2,15 @@ use axum::extract::{Query, State};
 use axum::response::{Html, Redirect};
 use serde::Deserialize;
 
-use super::{ApiError, ApiResult, AppState};
+use super::AppState;
+use super::error::{ApiError, Result};
+use super::models::oauth_state::OAuthState;
+use super::models::user_links::{UserLink, UserLinkPayload};
 use crate::templates::oauth_success_page;
 
 #[derive(Debug, Deserialize)]
 pub struct OAuthStartQueryParams {
-    pub telegram_id: Option<String>,
+    pub telegram_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,18 +33,28 @@ struct DiscordUser {
 pub async fn oauth_start(
     Query(params): Query<OAuthStartQueryParams>,
     State(state): State<AppState>,
-) -> ApiResult<Redirect> {
-    let _telegram_id = params.telegram_id.ok_or(ApiError::MissingParameter {
-        parameter: "telegram_id".to_string(),
-    })?;
+) -> Result<Redirect> {
+    let mut tx = state.pool.acquire().await?;
+    let telegram_id = params.telegram_id;
 
-    let oauth_state = uuid::Uuid::new_v4();
+    let link_exists = UserLink::find_by_telegram_id(tx.as_mut(), &telegram_id)
+        .await?
+        .is_some();
+
+    if link_exists {
+        return Err(ApiError::DiscordApi {
+            message: "Telegram account is already linked to a Discord account".to_string(),
+        });
+    }
+
+    let token = uuid::Uuid::new_v4().to_string();
+    OAuthState::create(tx.as_mut(), &telegram_id, &token).await?;
 
     let discord_oauth_url = format!(
         "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
         state.discord_client_id,
         urlencoding::encode(&state.discord_oauth_redirect),
-        oauth_state
+        token
     );
 
     Ok(Redirect::to(&discord_oauth_url))
@@ -50,10 +63,17 @@ pub async fn oauth_start(
 pub async fn oauth_callback(
     Query(params): Query<OAuthCallbackQueryParams>,
     State(state): State<AppState>,
-) -> ApiResult<Html<String>> {
+) -> Result<Html<String>> {
+    let mut tx = state.pool.acquire().await?;
+
+    let Some(oauth_state) = OAuthState::get_and_delete(tx.as_mut(), &params.state).await? else {
+        return Err(ApiError::ForbiddenRequest {
+            message: "Discord account is already linked to a Telegram account".to_string(),
+        });
+    };
+
     let client = reqwest::Client::new();
 
-    // Exchange code for access token
     let token_response = client
         .post("https://discord.com/api/oauth2/token")
         .form(&[
@@ -72,7 +92,6 @@ pub async fn oauth_callback(
         .json::<DiscordTokenResponse>()
         .await?;
 
-    // Get Discord user info
     let discord_user = client
         .get("https://discord.com/api/users/@me")
         .bearer_auth(&token_response.access_token)
@@ -85,8 +104,28 @@ pub async fn oauth_callback(
         .json::<DiscordUser>()
         .await?;
 
-    // TODO: Store the link between discord_user.id and telegram_id
-    // For now, just return success page
+    let link_exists = UserLink::find_by_discord_id(tx.as_mut(), &discord_user.id)
+        .await?
+        .is_some();
+
+    if link_exists {
+        return Err(ApiError::DiscordApi {
+            message: "Discord account is already linked to a Telegram account".to_string(),
+        });
+    }
+
+    let new_link = UserLinkPayload {
+        discord_id: discord_user.id,
+        discord_username: discord_user.username.clone(),
+        telegram_id: oauth_state.telegram_id,
+    };
+
+    let user_link = UserLink::create_link(tx.as_mut(), new_link).await?;
+
+    // TODO: add user to telegram group
+
+    UserLink::mark_added_to_group(tx.as_mut(), &user_link.id).await?;
+
     let success_html = oauth_success_page(&discord_user.username);
     Ok(Html(success_html.into_string()))
 }

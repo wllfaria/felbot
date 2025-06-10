@@ -1,4 +1,5 @@
-use maud::{html, Markup};
+use maud::{Markup, html};
+
 use crate::templates::base_layout;
 
 pub fn oauth_success_page(username: &str) -> Markup {
@@ -10,7 +11,7 @@ pub fn oauth_success_page(username: &str) -> Markup {
             "setTimeout(() => window.close(), 3000);"
         }
     };
-    
+
     base_layout("Account Linked Successfully", content)
 }
 
@@ -20,6 +21,6 @@ pub fn oauth_error_page(error_message: &str) -> Markup {
         p class="message" { (error_message) }
         p { a href="javascript:history.back()" { "Go Back" } }
     };
-    
+
     base_layout("Error", content)
 }

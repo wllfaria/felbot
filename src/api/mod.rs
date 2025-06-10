@@ -1,25 +1,45 @@
 mod error;
+mod models;
 mod oauth;
-mod state;
+
+use std::time::Duration;
 
 use axum::Router;
 use axum::routing::get;
-use error::ApiError;
 use oauth::{oauth_callback, oauth_start};
-use state::AppState;
+use sqlx::PgPool;
 
 use crate::env;
 
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub discord_oauth_redirect: String,
+    pub discord_client_id: String,
+    pub discord_client_secret: String,
+    pub pool: PgPool,
+}
+
 pub async fn init() {
     let port = env!("PORT");
+    let database_url = env!("DATABASE_URL");
     let discord_oauth_redirect = env!("DISCORD_OAUTH_REDIRECT");
     let discord_client_id = env!("DISCORD_CLIENT_ID");
     let discord_client_secret = env!("DISCORD_CLIENT_SECRET");
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(3))
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::migrate!().run(&pool).await.unwrap();
 
     let app_state = AppState {
         discord_oauth_redirect,
         discord_client_id,
         discord_client_secret,
+        pool,
     };
 
     let app = Router::new()
@@ -31,5 +51,7 @@ pub async fn init() {
         .await
         .unwrap_or_else(|_| panic!("Failed to bind to port {port}"));
 
+    let listener_addr = listener.local_addr().unwrap();
+    tracing::info!("api ready and listening on {listener_addr}");
     axum::serve(listener, app).await.expect("web server failed");
 }

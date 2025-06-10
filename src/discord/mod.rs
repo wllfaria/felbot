@@ -1,13 +1,14 @@
 use poise::CreateReply;
 use poise::serenity_prelude::{self as serenity};
 
+use crate::env;
+
 struct Data {}
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 pub async fn init() {
-    let token = dotenvy::var("DISCORD_TOKEN")
-        .expect("missing required environment variable: DISCORD_TOKEN");
+    let token = env!("DISCORD_TOKEN");
     let intents = serenity::GatewayIntents::non_privileged();
 
     let options = poise::FrameworkOptions {

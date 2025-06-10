@@ -2,6 +2,8 @@ use teloxide::prelude::*;
 use teloxide::types::User;
 use teloxide::utils::command::BotCommands;
 
+use crate::env;
+
 pub async fn init() {
     let bot = Bot::from_env();
     Command::repl(bot, answer).await;
@@ -27,9 +29,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
 }
 
 fn make_help_message(user: User) -> String {
-    let link_base_url = dotenvy::var("ACCOUNT_LINK_URL")
-        .expect("missing required environment variable: ACCOUNT_LINK_URL");
-
+    let link_base_url = env!("ACCOUNT_LINK_URL");
     let username = user.username.unwrap_or(user.first_name);
     let user_id = user.id.0;
     let link_url = format!("{link_base_url}?telegram_id={user_id}");

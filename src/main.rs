@@ -1,6 +1,10 @@
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
 mod api;
 mod discord;
 mod telegram;
+mod templates;
 
 #[macro_export]
 macro_rules! env {
@@ -11,6 +15,11 @@ macro_rules! env {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
     let mut discord_handle = tokio::spawn(discord::init());
     let mut telegram_handle = tokio::spawn(telegram::init());
     let mut api_handle = tokio::spawn(api::init());
