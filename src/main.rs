@@ -7,6 +7,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod api;
 mod discord;
 mod env;
+mod messages;
 mod telegram;
 mod templates;
 

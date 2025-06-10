@@ -6,7 +6,7 @@ use super::AppState;
 use super::error::{ApiError, Result};
 use super::models::oauth_state::OAuthState;
 use super::models::user_links::{UserLink, UserLinkPayload};
-use crate::telegram::TelegramAction;
+use crate::messages::TelegramAction;
 use crate::templates::oauth_success_page;
 
 #[derive(Debug, Deserialize)]
@@ -126,12 +126,12 @@ pub async fn oauth_callback(
     .await?;
 
     let action = TelegramAction::InviteUser {
-        telegram_id: oauth_state.telegram_id,
-        discord_id: discord_user.id,
+        telegram_id: oauth_state.telegram_id.clone(),
+        discord_id: discord_user.id.clone(),
     };
 
     if let Err(e) = state.telegram_sender.send(action) {
-        tracing::error!("faield to send telegram action: {e}");
+        tracing::error!("Failed to send telegram action: {e}");
     }
 
     UserLink::mark_added_to_group(tx.as_mut(), &user_link.id).await?;

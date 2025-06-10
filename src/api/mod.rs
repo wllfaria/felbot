@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::env::Env;
-use crate::telegram::TelegramAction;
+use crate::messages::TelegramAction;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
