@@ -1,14 +1,15 @@
+use std::sync::Arc;
+
 use poise::CreateReply;
 use poise::serenity_prelude::{self as serenity};
 
-use crate::env;
+use crate::env::Env;
 
 struct Data {}
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
-pub async fn init() {
-    let token = env!("DISCORD_TOKEN");
+pub async fn init(env: Arc<Env>) {
     let intents = serenity::GatewayIntents::non_privileged();
 
     let options = poise::FrameworkOptions {
@@ -21,7 +22,7 @@ pub async fn init() {
         .setup(|ctx, ready, framework| Box::pin(setup(ctx, ready, framework)))
         .build();
 
-    let client = serenity::ClientBuilder::new(token, intents)
+    let client = serenity::ClientBuilder::new(&env.discord_token, intents)
         .framework(framework)
         .await;
 

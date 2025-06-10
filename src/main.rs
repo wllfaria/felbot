@@ -1,17 +1,14 @@
+use std::sync::Arc;
+
+use env::Env;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 mod api;
 mod discord;
+mod env;
 mod telegram;
 mod templates;
-
-#[macro_export]
-macro_rules! env {
-    ($name:expr) => {
-        dotenvy::var($name).expect(&format!("missing required environment variable: {}", $name))
-    };
-}
 
 #[tokio::main]
 async fn main() {
@@ -22,9 +19,10 @@ async fn main() {
 
     let (telegram_sender, telegram_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-    let mut discord_handle = tokio::spawn(discord::init());
-    let mut telegram_handle = tokio::spawn(telegram::init(telegram_receiver));
-    let mut api_handle = tokio::spawn(api::init(telegram_sender));
+    let env = Arc::new(Env::new());
+    let mut discord_handle = tokio::spawn(discord::init(env.clone()));
+    let mut telegram_handle = tokio::spawn(telegram::init(env.clone(), telegram_receiver));
+    let mut api_handle = tokio::spawn(api::init(env.clone(), telegram_sender));
 
     tokio::select! {
         result = &mut discord_handle => {

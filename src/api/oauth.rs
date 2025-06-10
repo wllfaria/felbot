@@ -53,8 +53,8 @@ pub async fn oauth_start(
 
     let discord_oauth_url = format!(
         "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
-        state.discord_client_id,
-        urlencoding::encode(&state.discord_oauth_redirect),
+        state.env.discord_client_id,
+        urlencoding::encode(&state.env.discord_oauth_redirect),
         token
     );
 
@@ -78,11 +78,11 @@ pub async fn oauth_callback(
     let token_response = client
         .post("https://discord.com/api/oauth2/token")
         .form(&[
-            ("client_id", state.discord_client_id.as_str()),
-            ("client_secret", state.discord_client_secret.as_str()),
+            ("client_id", state.env.discord_client_id.as_str()),
+            ("client_secret", state.env.discord_client_secret.as_str()),
             ("grant_type", "authorization_code"),
             ("code", params.code.as_str()),
-            ("redirect_uri", state.discord_oauth_redirect.as_str()),
+            ("redirect_uri", state.env.discord_oauth_redirect.as_str()),
         ])
         .send()
         .await?
