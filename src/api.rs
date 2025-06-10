@@ -7,6 +7,7 @@ use derive_more::{Display, Error, From};
 use serde::Deserialize;
 
 use crate::env;
+use crate::templates::{oauth_error_page, oauth_success_page};
 
 #[derive(Debug, Display, Error, From)]
 enum ApiError {
@@ -57,24 +58,7 @@ impl IntoResponse for ApiError {
             ),
         };
 
-        let body = Html(format!(
-            r#"<!DOCTYPE html>
-            <html>
-            <head>
-                <title>Error</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-                    .error {{ color: red; font-size: 24px; margin-bottom: 20px; }}
-                    .message {{ color: #666; }}
-                </style>
-            </head>
-            <body>
-                <div class="error">❌ Error</div>
-                <p class="message">{error_message}</p>
-                <p><a href="javascript:history.back()">Go Back</a></p>
-            </body>
-            </html>"#,
-        ));
+        let body = Html(oauth_error_page(&error_message).into_string());
 
         (status, body).into_response()
     }
@@ -195,26 +179,6 @@ async fn oauth_callback(
 
     // TODO: Store the link between discord_user.id and telegram_id
     // For now, just return success page
-    let success_html = format!(
-        r#"<!DOCTYPE html>
-        <html>
-        <head>
-            <title>Account Linked Successfully</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
-                .success {{ color: green; font-size: 24px; margin-bottom: 20px; }}
-                .info {{ color: #666; }}
-            </style>
-        </head>
-        <body>
-            <div class="success">✅ Account Linked Successfully!</div>
-            <p>Discord account <strong>{}</strong> has been linked.</p>
-            <p class="info">You can now close this window and return to Telegram.</p>
-            <script>setTimeout(() => window.close(), 3000);</script>
-        </body>
-        </html>"#,
-        discord_user.username
-    );
-
-    Ok(Html(success_html))
+    let success_html = oauth_success_page(&discord_user.username);
+    Ok(Html(success_html.into_string()))
 }
