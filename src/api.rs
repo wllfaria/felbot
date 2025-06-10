@@ -1,10 +1,86 @@
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::response::{Html, Redirect};
+use axum::http::StatusCode;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
+use derive_more::{Display, Error, From};
 use serde::Deserialize;
 
 use crate::env;
+
+#[derive(Debug, Display, Error, From)]
+enum ApiError {
+    #[display("Missing required parameter: {}", parameter)]
+    MissingParameter { parameter: String },
+
+    #[display("Invalid or expired OAuth state")]
+    InvalidState,
+
+    #[display("Discord API error: {}", message)]
+    DiscordApi { message: String },
+
+    #[display("HTTP request failed: {}", _0)]
+    #[from]
+    Http(reqwest::Error),
+
+    #[display("JSON parsing failed: {}", _0)]
+    Json(#[error(source)] reqwest::Error),
+
+    #[display("Database error: {}", message)]
+    Database { message: String },
+
+    #[display("Internal server error")]
+    Internal,
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            ApiError::MissingParameter { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::InvalidState => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::DiscordApi { .. } => (StatusCode::BAD_GATEWAY, self.to_string()),
+            ApiError::Http(_) => (
+                StatusCode::BAD_GATEWAY,
+                "External service unavailable".to_string(),
+            ),
+            ApiError::Json(_) => (
+                StatusCode::BAD_GATEWAY,
+                "Invalid response from Discord".to_string(),
+            ),
+            ApiError::Database { .. } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error".to_string(),
+            ),
+            ApiError::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".to_string(),
+            ),
+        };
+
+        let body = Html(format!(
+            r#"<!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
+                    .error {{ color: red; font-size: 24px; margin-bottom: 20px; }}
+                    .message {{ color: #666; }}
+                </style>
+            </head>
+            <body>
+                <div class="error">❌ Error</div>
+                <p class="message">{error_message}</p>
+                <p><a href="javascript:history.back()">Go Back</a></p>
+            </body>
+            </html>"#,
+        ));
+
+        (status, body).into_response()
+    }
+}
+
+type ApiResult<T> = Result<T, ApiError>;
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -39,13 +115,17 @@ pub async fn init() {
 
 #[derive(Debug, Deserialize)]
 struct OAuthStartQueryParams {
-    telegram_id: String,
+    telegram_id: Option<String>,
 }
 
 async fn oauth_start(
     Query(params): Query<OAuthStartQueryParams>,
     State(state): State<AppState>,
-) -> Result<Redirect, String> {
+) -> ApiResult<Redirect> {
+    let _telegram_id = params.telegram_id.ok_or(ApiError::MissingParameter {
+        parameter: "telegram_id".to_string(),
+    })?;
+
     let oauth_state = uuid::Uuid::new_v4();
 
     let discord_oauth_url = format!(
@@ -67,10 +147,6 @@ struct OAuthCallbackQueryParams {
 #[derive(Debug, Deserialize)]
 struct DiscordTokenResponse {
     access_token: String,
-    token_type: String,
-    expires_in: u64,
-    refresh_token: String,
-    scope: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,25 +158,63 @@ struct DiscordUser {
 async fn oauth_callback(
     Query(params): Query<OAuthCallbackQueryParams>,
     State(state): State<AppState>,
-) -> Result<Html<String>, String> {
+) -> ApiResult<Html<String>> {
     let client = reqwest::Client::new();
 
+    // Exchange code for access token
     let token_response = client
         .post("https://discord.com/api/oauth2/token")
         .form(&[
-            ("client_id", &state.discord_client_id),
-            ("client_secret", &state.discord_client_secret),
+            ("client_id", state.discord_client_id.as_str()),
+            ("client_secret", state.discord_client_secret.as_str()),
+            ("grant_type", "authorization_code"),
+            ("code", params.code.as_str()),
+            ("redirect_uri", state.discord_oauth_redirect.as_str()),
         ])
         .send()
         .await?
+        .error_for_status()
+        .map_err(|e| ApiError::DiscordApi {
+            message: format!("Token exchange failed: {e}"),
+        })?
         .json::<DiscordTokenResponse>()
         .await?;
 
+    // Get Discord user info
     let discord_user = client
         .get("https://discord.com/api/users/@me")
         .bearer_auth(&token_response.access_token)
         .send()
         .await?
+        .error_for_status()
+        .map_err(|e| ApiError::DiscordApi {
+            message: format!("User info request failed: {e}"),
+        })?
         .json::<DiscordUser>()
         .await?;
+
+    // TODO: Store the link between discord_user.id and telegram_id
+    // For now, just return success page
+    let success_html = format!(
+        r#"<!DOCTYPE html>
+        <html>
+        <head>
+            <title>Account Linked Successfully</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
+                .success {{ color: green; font-size: 24px; margin-bottom: 20px; }}
+                .info {{ color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="success">✅ Account Linked Successfully!</div>
+            <p>Discord account <strong>{}</strong> has been linked.</p>
+            <p class="info">You can now close this window and return to Telegram.</p>
+            <script>setTimeout(() => window.close(), 3000);</script>
+        </body>
+        </html>"#,
+        discord_user.username
+    );
+
+    Ok(Html(success_html))
 }
