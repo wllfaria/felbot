@@ -8,18 +8,21 @@ use axum::Router;
 use axum::routing::get;
 use oauth::{oauth_callback, oauth_start};
 use sqlx::PgPool;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::env;
+use crate::telegram::TelegramAction;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
+    pub telegram_sender: UnboundedSender<TelegramAction>,
     pub discord_oauth_redirect: String,
     pub discord_client_id: String,
     pub discord_client_secret: String,
     pub pool: PgPool,
 }
 
-pub async fn init() {
+pub async fn init(telegram_sender: UnboundedSender<TelegramAction>) {
     let port = env!("PORT");
     let database_url = env!("DATABASE_URL");
     let discord_oauth_redirect = env!("DISCORD_OAUTH_REDIRECT");
@@ -37,8 +40,9 @@ pub async fn init() {
 
     let app_state = AppState {
         discord_oauth_redirect,
-        discord_client_id,
         discord_client_secret,
+        discord_client_id,
+        telegram_sender,
         pool,
     };
 

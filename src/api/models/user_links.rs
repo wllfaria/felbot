@@ -16,16 +16,26 @@ pub struct UserLink {
 }
 
 #[derive(Debug)]
-pub struct UserLinkPayload {
-    pub discord_id: String,
-    pub discord_username: String,
-    pub telegram_id: String,
+pub struct UserLinkPayload<'a> {
+    pub discord_id: &'a str,
+    pub discord_username: &'a str,
+    pub telegram_id: &'a str,
+}
+
+impl<'a> UserLinkPayload<'a> {
+    pub fn new(discord_id: &'a str, discord_username: &'a str, telegram_id: &'a str) -> Self {
+        Self {
+            discord_id,
+            discord_username,
+            telegram_id,
+        }
+    }
 }
 
 impl UserLink {
     pub async fn create_link(
         executor: &mut PgConnection,
-        new_link: UserLinkPayload,
+        new_link: UserLinkPayload<'_>,
     ) -> sqlx::Result<UserLink> {
         let user_link = sqlx::query_as!(
             UserLink,

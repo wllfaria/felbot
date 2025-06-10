@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/target/release/telps .
+COPY --from=builder /app/target/release/felbot .
 COPY --from=builder /app/migrations ./migrations
 
 EXPOSE 8080
-CMD ["./telps"]
+CMD ["./felbot"]

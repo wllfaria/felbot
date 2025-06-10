@@ -20,9 +20,11 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let (telegram_sender, telegram_receiver) = tokio::sync::mpsc::unbounded_channel();
+
     let mut discord_handle = tokio::spawn(discord::init());
-    let mut telegram_handle = tokio::spawn(telegram::init());
-    let mut api_handle = tokio::spawn(api::init());
+    let mut telegram_handle = tokio::spawn(telegram::init(telegram_receiver));
+    let mut api_handle = tokio::spawn(api::init(telegram_sender));
 
     tokio::select! {
         result = &mut discord_handle => {
