@@ -102,4 +102,15 @@ impl UserLink {
 
         Ok(users)
     }
+
+    pub async fn delete_by_discord_id(
+        executor: &mut PgConnection,
+        discord_id: &str,
+    ) -> sqlx::Result<()> {
+        sqlx::query!("DELETE FROM user_links WHERE discord_id = $1", discord_id)
+            .execute(executor)
+            .await?;
+
+        Ok(())
+    }
 }

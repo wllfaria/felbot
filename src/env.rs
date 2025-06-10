@@ -15,6 +15,7 @@ pub struct Env {
     pub discord_client_id: String,
     pub discord_client_secret: String,
     pub discord_oauth_redirect: String,
+    pub discord_guild_id: String,
     pub discord_allowed_roles: Vec<String>,
     pub telegram_group_id: String,
 }
@@ -30,6 +31,7 @@ impl Env {
         let discord_client_secret = env!("DISCORD_CLIENT_SECRET");
         let discord_oauth_redirect = env!("DISCORD_OAUTH_REDIRECT");
 
+        let discord_guild_id = env!("DISCORD_GUILD_ID");
         let discord_allowed_roles = env!("DISCORD_ALLOWED_ROLES")
             .split(" ")
             .map(ToString::to_string)
@@ -45,6 +47,7 @@ impl Env {
             discord_client_id,
             discord_client_secret,
             discord_oauth_redirect,
+            discord_guild_id,
             discord_allowed_roles,
             telegram_group_id,
         }
