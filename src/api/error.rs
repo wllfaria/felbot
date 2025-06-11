@@ -22,15 +22,33 @@ pub enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, error_message) = match self {
+        let (status, error_message) = match &self {
             ApiError::DiscordApi { .. } => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::Http(_) => (
                 StatusCode::BAD_GATEWAY,
                 "External service unavailable".to_string(),
             ),
-            ApiError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
+            ApiError::Database(_) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error occurred".to_string(),
+            ),
             ApiError::ForbiddenRequest { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
         };
+
+        match &self {
+            ApiError::Database(e) => {
+                tracing::error!(error = %e, "Database error in API request");
+            }
+            ApiError::DiscordApi { message } => {
+                tracing::error!(message = %message, "Discord API error");
+            }
+            ApiError::Http(e) => {
+                tracing::error!(error = %e, "HTTP client error");
+            }
+            ApiError::ForbiddenRequest { message } => {
+                tracing::warn!(message = %message, "Forbidden request");
+            }
+        }
 
         let body = Html(oauth_error_page(&error_message).into_string());
 

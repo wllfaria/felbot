@@ -10,6 +10,8 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
 pub async fn init(env: Arc<Env>) {
+    tracing::info!("Initializing Discord service");
+    
     let intents = serenity::GatewayIntents::non_privileged();
 
     let options = poise::FrameworkOptions {
@@ -24,22 +26,54 @@ pub async fn init(env: Arc<Env>) {
 
     let client = serenity::ClientBuilder::new(&env.discord_token, intents)
         .framework(framework)
-        .await;
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to create Discord client");
+            e
+        })
+        .expect("Failed to create Discord client");
 
-    client.unwrap().start().await.unwrap();
+    tracing::info!("Discord client created, starting connection");
+    
+    if let Err(e) = client.start().await {
+        tracing::error!(error = %e, "Discord client failed");
+    }
 }
 
 async fn setup(
     ctx: &serenity::Context,
-    _: &serenity::Ready,
+    ready: &serenity::Ready,
     framework: &poise::Framework<Data, Error>,
 ) -> Result<Data, Error> {
-    poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+    tracing::info!(
+        bot_username = %ready.user.name,
+        bot_id = %ready.user.id,
+        guild_count = ready.guilds.len(),
+        "Discord bot connected and ready"
+    );
+
+    poise::builtins::register_globally(ctx, &framework.options().commands).await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to register Discord commands globally");
+            e
+        })?;
+    
+    tracing::info!(command_count = framework.options().commands.len(), "Discord commands registered globally");
     Ok(Data {})
 }
 
 #[poise::command(slash_command)]
 async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
+    let user = &ctx.author();
+    let guild_id = ctx.guild_id();
+    
+    tracing::info!(
+        user_id = %user.id,
+        username = %user.name,
+        guild_id = ?guild_id,
+        "Processing /telegram command"
+    );
+
     let author = serenity::CreateEmbedAuthor::new("felbot");
     let footer = serenity::CreateEmbedFooter::new("a carinha '-'").icon_url("https://yt3.googleusercontent.com/c0u2JGrq6Ke9i15R66z2u3RR0fY8RHFAkrocO8cGkRu2FLhke2DH_e_zjiW17_RnBHDzQw4KlA=s160-c-k-c0x00ffffff-no-rj");
     let embed = serenity::CreateEmbed::new()
@@ -52,7 +86,12 @@ async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
         .footer(footer);
 
     let reply = CreateReply::default().embed(embed).ephemeral(true);
-    ctx.send(reply).await?;
+    
+    ctx.send(reply).await.map_err(|e| {
+        tracing::error!(error = %e, user_id = %user.id, "Failed to send telegram command response");
+        e
+    })?;
 
+    tracing::info!(user_id = %user.id, "Telegram command response sent successfully");
     Ok(())
 }
