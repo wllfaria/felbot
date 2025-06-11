@@ -22,6 +22,8 @@ pub struct Env {
 
 impl Env {
     pub fn new() -> Self {
+        tracing::debug!("Loading environment configuration");
+
         let port = env!("PORT");
         let database_url = env!("DATABASE_URL");
         let account_link_url = env!("ACCOUNT_LINK_URL");
@@ -43,6 +45,14 @@ impl Env {
         let telegram_group_id = env!("TELEGRAM_GROUP_ID")
             .parse::<i64>()
             .expect("TELEGRAM_GROUP_ID must be an integer");
+
+        tracing::debug!(
+            port = %port,
+            discord_guild_id = %discord_guild_id,
+            telegram_group_id = %telegram_group_id,
+            allowed_roles_count = discord_allowed_roles.len(),
+            "Environment configuration loaded"
+        );
 
         Self {
             port,

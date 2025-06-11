@@ -31,21 +31,23 @@ struct DiscordUser {
     username: String,
 }
 
+#[tracing::instrument(skip(state))]
 pub async fn oauth_start(
     Query(params): Query<OAuthStartQueryParams>,
     State(state): State<AppState>,
 ) -> Result<Redirect> {
+    tracing::info!("starting oauth flow");
+
     let mut tx = state.pool.acquire().await?;
     let telegram_id = params.telegram_id;
-
     let link_exists = UserLink::find_by_telegram_id(tx.as_mut(), telegram_id)
         .await?
         .is_some();
 
     if link_exists {
-        return Err(ApiError::DiscordApi {
-            message: "Telegram account is already linked to a Discord account".to_string(),
-        });
+        let message = "Telegram account is already linked to a Discord account".to_string();
+        tracing::warn!("{message}");
+        return Err(ApiError::DiscordApi { message });
     }
 
     let token = uuid::Uuid::new_v4().to_string();

@@ -23,7 +23,9 @@ pub async fn init(env: Arc<Env>, pool: PgPool, telegram_sender: UnboundedSender<
         };
 
         if let Err(e) = check_user_roles(env.clone(), tx.as_mut(), telegram_sender.clone()).await {
-            tx.rollback().await;
+            if let Err(e) = tx.rollback().await {
+                tracing::error!("failed to rollback transaction: {e}");
+            };
             tracing::error!("Role check failed: {}", e);
             continue;
         }
@@ -34,6 +36,7 @@ pub async fn init(env: Arc<Env>, pool: PgPool, telegram_sender: UnboundedSender<
     }
 }
 
+#[tracing::instrument(skip_all)]
 async fn check_user_roles(
     env: Arc<Env>,
     conn: &mut PgConnection,
@@ -46,11 +49,13 @@ async fn check_user_roles(
     let users = UserLink::get_all_users(conn).await?;
 
     for user in users {
-        let span = tracing::info_span!("user");
+        let span = tracing::info_span!("user({})", user.discord_id);
         let _guard = span.enter();
 
+        tracing::info!("checking for user roles");
+
         let Ok(has_roles) = has_allowed_roles(&discord_client, &env, &user, guild_id).await else {
-            tracing::warn!("Failed to check roles for user {}", user.discord_id);
+            tracing::warn!("Failed to check roles for user");
             continue;
         };
 
@@ -60,18 +65,12 @@ async fn check_user_roles(
             });
 
             if let Err(e) = send_result {
-                tracing::error!(
-                    "Failed to send remove action for user {}: {e}",
-                    user.discord_id,
-                );
+                tracing::error!("Failed to send remove action: {e}");
                 continue;
             }
 
-            if UserLink::delete_by_discord_id(conn, user.discord_id)
-                .await
-                .is_err()
-            {
-                tracing::error!("failed to delete user link from database");
+            if let Err(e) = UserLink::delete_by_discord_id(conn, user.discord_id).await {
+                tracing::error!("failed to delete user link from database: {e}");
             }
         }
     }

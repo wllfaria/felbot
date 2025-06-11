@@ -6,9 +6,6 @@ use crate::templates::oauth_error_page;
 
 #[derive(Debug, Display, Error, From)]
 pub enum ApiError {
-    #[display("Missing required parameter: {parameter}")]
-    MissingParameter { parameter: String },
-
     #[display("Discord API error: {message}")]
     DiscordApi { message: String },
 
@@ -26,7 +23,6 @@ pub enum ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
-            ApiError::MissingParameter { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::DiscordApi { .. } => (StatusCode::BAD_GATEWAY, self.to_string()),
             ApiError::Http(_) => (
                 StatusCode::BAD_GATEWAY,
