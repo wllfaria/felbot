@@ -18,6 +18,10 @@ pub enum ApiError {
 
     #[from]
     Database(sqlx::Error),
+
+    #[display("Internal server error: {message}")]
+    #[from]
+    InternalError { message: String },
 }
 
 impl IntoResponse for ApiError {
@@ -33,6 +37,7 @@ impl IntoResponse for ApiError {
                 "Database error occurred".to_string(),
             ),
             ApiError::ForbiddenRequest { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::InternalError { .. } => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
         match &self {
@@ -47,6 +52,9 @@ impl IntoResponse for ApiError {
             }
             ApiError::ForbiddenRequest { message } => {
                 tracing::warn!(message = %message, "Forbidden request");
+            }
+            ApiError::InternalError { message } => {
+                tracing::error!(message = %message, "Internal error");
             }
         }
 

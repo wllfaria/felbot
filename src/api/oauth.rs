@@ -27,7 +27,7 @@ struct DiscordTokenResponse {
 
 #[derive(Debug, Deserialize)]
 struct DiscordUser {
-    id: i64,
+    id: String,
     username: String,
 }
 
@@ -108,6 +108,7 @@ pub async fn oauth_callback(
     let client = reqwest::Client::new();
 
     tracing::debug!("Exchanging authorization code for access token");
+
     let token_response = client
         .post("https://discord.com/api/oauth2/token")
         .form(&[
@@ -161,7 +162,12 @@ pub async fn oauth_callback(
             e
         })?;
 
-    let discord_id = discord_user.id;
+    let discord_id = discord_user
+        .id
+        .parse::<i64>()
+        .map_err(|_| ApiError::DiscordApi {
+            message: String::from("user with non-numeric id"),
+        })?;
     tracing::info!(discord_id = %discord_id, username = %discord_user.username, "Retrieved Discord user info");
 
     let link_exists = UserLink::find_by_discord_id(tx.as_mut(), discord_id)

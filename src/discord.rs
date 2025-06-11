@@ -11,7 +11,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 
 pub async fn init(env: Arc<Env>) {
     tracing::info!("Initializing Discord service");
-    
+
     let intents = serenity::GatewayIntents::non_privileged();
 
     let options = poise::FrameworkOptions {
@@ -24,7 +24,7 @@ pub async fn init(env: Arc<Env>) {
         .setup(|ctx, ready, framework| Box::pin(setup(ctx, ready, framework)))
         .build();
 
-    let client = serenity::ClientBuilder::new(&env.discord_token, intents)
+    let mut client = serenity::ClientBuilder::new(&env.discord_token, intents)
         .framework(framework)
         .await
         .map_err(|e| {
@@ -34,7 +34,7 @@ pub async fn init(env: Arc<Env>) {
         .expect("Failed to create Discord client");
 
     tracing::info!("Discord client created, starting connection");
-    
+
     if let Err(e) = client.start().await {
         tracing::error!(error = %e, "Discord client failed");
     }
@@ -52,21 +52,25 @@ async fn setup(
         "Discord bot connected and ready"
     );
 
-    poise::builtins::register_globally(ctx, &framework.options().commands).await
+    poise::builtins::register_globally(ctx, &framework.options().commands)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to register Discord commands globally");
             e
         })?;
-    
-    tracing::info!(command_count = framework.options().commands.len(), "Discord commands registered globally");
+
+    tracing::info!(
+        command_count = framework.options().commands.len(),
+        "Discord commands registered globally"
+    );
     Ok(Data {})
 }
 
 #[poise::command(slash_command)]
 async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
-    let user = &ctx.author();
+    let user = ctx.author();
     let guild_id = ctx.guild_id();
-    
+
     tracing::info!(
         user_id = %user.id,
         username = %user.name,
@@ -86,7 +90,7 @@ async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
         .footer(footer);
 
     let reply = CreateReply::default().embed(embed).ephemeral(true);
-    
+
     ctx.send(reply).await.map_err(|e| {
         tracing::error!(error = %e, user_id = %user.id, "Failed to send telegram command response");
         e

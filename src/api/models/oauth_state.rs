@@ -45,12 +45,4 @@ impl OAuthState {
 
         Ok(result)
     }
-
-    pub async fn cleanup_expired(executor: &mut PgConnection) -> sqlx::Result<u64> {
-        let result = sqlx::query!("DELETE FROM oauth_states WHERE expires_at < NOW()")
-            .execute(executor)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 }

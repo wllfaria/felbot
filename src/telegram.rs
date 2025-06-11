@@ -10,7 +10,7 @@ use crate::messages::TelegramAction;
 
 pub async fn init(env: Arc<Env>, receiver: UnboundedReceiver<TelegramAction>) {
     tracing::info!("Initializing Telegram service");
-    
+
     let bot = Bot::from_env();
 
     let new_bot = bot.clone();
@@ -35,29 +35,25 @@ enum Command {
     Start,
 }
 
-#[tracing::instrument(skip(bot), fields(
+#[tracing::instrument(skip(env, bot, cmd), fields(
     chat_id = msg.chat.id.0,
     user_id = msg.from.as_ref().map(|u| u.id.0),
     username = msg.from.as_ref().and_then(|u| u.username.as_deref())
 ))]
 async fn answer(env: Arc<Env>, bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
     tracing::info!("Processing Telegram command");
-    
+
     match cmd {
         Command::Start => {
-            // Only answer messages outside of the group
             if msg.chat.id.0 == env.telegram_group_id {
                 tracing::debug!("Ignoring /start command in group chat");
                 return Ok(());
             }
 
-            let user = msg.from.ok_or_else(|| {
+            let Some(user) = msg.from else {
                 tracing::error!("Message has no user information");
-                teloxide::RequestError::InvalidJson {
-                    raw: "No user in message".to_string(),
-                    source: serde_json::Error::custom("No user"),
-                }
-            })?;
+                return Ok(());
+            };
 
             tracing::info!(
                 user_id = user.id.0,
@@ -96,10 +92,10 @@ fn make_help_message(env: &Env, user: User) -> String {
     ].join("\n")
 }
 
-#[tracing::instrument(skip(bot), fields(user_id = user_chat_id.0))]
+#[tracing::instrument(skip(bot, env), fields(user_id = user_chat_id.0))]
 async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> ResponseResult<()> {
     tracing::info!("Creating invite link for user");
-    
+
     let invite = bot
         .create_chat_invite_link(env.telegram_group_id.to_string())
         .await
@@ -107,7 +103,7 @@ async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> Resp
             tracing::error!(error = %e, "Failed to create chat invite link");
             e
         })?;
-    
+
     let link = invite.invite_link;
     tracing::debug!(invite_link = %link, "Invite link created");
 
@@ -130,21 +126,21 @@ async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> Resp
     Ok(())
 }
 
-#[tracing::instrument(skip(bot), fields(user_id = user_id.0, group_id = env.telegram_group_id))]
+#[tracing::instrument(skip(bot, env), fields(user_id = user_id.0, group_id = env.telegram_group_id))]
 async fn kick_user(env: &Env, bot: &Bot, user_id: UserId) -> ResponseResult<()> {
     let group_id = ChatId(env.telegram_group_id);
-    
+
     tracing::info!("Removing user from Telegram group");
 
-    bot.ban_chat_member(group_id, user_id).await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to ban user from group");
-            e
-        })?;
-    
+    bot.ban_chat_member(group_id, user_id).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to ban user from group");
+        e
+    })?;
+
     tracing::debug!("User banned, now unbanning to allow re-entry");
 
-    bot.unban_chat_member(group_id, user_id).await
+    bot.unban_chat_member(group_id, user_id)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to unban user (user will remain banned)");
             e
@@ -160,10 +156,10 @@ async fn process_telegram_actions(
     mut receiver: UnboundedReceiver<TelegramAction>,
 ) {
     let mut action_count = 0u64;
-    
+
     while let Some(action) = receiver.recv().await {
         action_count += 1;
-        
+
         let span = tracing::info_span!(
             "telegram_action",
             action_type = match &action {
@@ -177,7 +173,7 @@ async fn process_telegram_actions(
         match action {
             TelegramAction::InviteUser { telegram_id } => {
                 tracing::info!(telegram_id = telegram_id, "Processing invite user action");
-                
+
                 if let Err(e) = send_invite_to_user(&env, &bot, UserId(telegram_id as u64)).await {
                     tracing::error!(
                         error = %e,
@@ -185,12 +181,15 @@ async fn process_telegram_actions(
                         "Failed to send invite to user"
                     );
                 } else {
-                    tracing::info!(telegram_id = telegram_id, "Invite action completed successfully");
+                    tracing::info!(
+                        telegram_id = telegram_id,
+                        "Invite action completed successfully"
+                    );
                 }
             }
             TelegramAction::RemoveUser { telegram_id } => {
                 tracing::info!(telegram_id = telegram_id, "Processing remove user action");
-                
+
                 if let Err(e) = kick_user(&env, &bot, UserId(telegram_id as u64)).await {
                     tracing::error!(
                         error = %e,
@@ -198,11 +197,17 @@ async fn process_telegram_actions(
                         "Failed to remove user"
                     );
                 } else {
-                    tracing::info!(telegram_id = telegram_id, "Remove action completed successfully");
+                    tracing::info!(
+                        telegram_id = telegram_id,
+                        "Remove action completed successfully"
+                    );
                 }
             }
         }
     }
-    
-    tracing::warn!(total_actions_processed = action_count, "Telegram action processor shutting down");
+
+    tracing::warn!(
+        total_actions_processed = action_count,
+        "Telegram action processor shutting down"
+    );
 }

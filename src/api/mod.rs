@@ -1,3 +1,4 @@
+mod cron;
 mod error;
 mod middleware;
 pub mod models;
@@ -7,26 +8,34 @@ use std::sync::Arc;
 
 use axum::routing::get;
 use axum::{Router, middleware as axum_middleware};
+use cron::cron_start;
 use middleware::trace_requests;
 use oauth::{oauth_callback, oauth_start};
 use sqlx::PgPool;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::env::Env;
-use crate::messages::TelegramAction;
+use crate::messages::{CronAction, TelegramAction};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub telegram_sender: UnboundedSender<TelegramAction>,
+    pub cron_sender: UnboundedSender<CronAction>,
     pub env: Arc<Env>,
     pub pool: PgPool,
 }
 
-pub async fn init(env: Arc<Env>, pool: PgPool, telegram_sender: UnboundedSender<TelegramAction>) {
+pub async fn init(
+    env: Arc<Env>,
+    pool: PgPool,
+    telegram_sender: UnboundedSender<TelegramAction>,
+    cron_sender: UnboundedSender<CronAction>,
+) {
     tracing::info!("Initializing API service");
 
     let app_state = AppState {
         telegram_sender,
+        cron_sender,
         pool,
         env: env.clone(),
     };
@@ -34,6 +43,7 @@ pub async fn init(env: Arc<Env>, pool: PgPool, telegram_sender: UnboundedSender<
     let app = Router::new()
         .route("/oauth/start", get(oauth_start))
         .route("/oauth/callback", get(oauth_callback))
+        .route("/cron", get(cron_start))
         .layer(axum_middleware::from_fn(trace_requests))
         .with_state(app_state);
 
