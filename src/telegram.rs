@@ -92,8 +92,8 @@ fn make_help_message(env: &Env, user: User) -> String {
     ].join("\n")
 }
 
-#[tracing::instrument(skip(bot, env), fields(user_id = user_chat_id.0))]
-async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> ResponseResult<()> {
+#[tracing::instrument(skip(bot, env), fields(user_id = user_id.0))]
+async fn send_invite_to_user(env: &Env, bot: &Bot, user_id: UserId) -> ResponseResult<()> {
     tracing::info!("Creating invite link for user");
 
     let invite = bot
@@ -114,13 +114,9 @@ async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> Resp
     ]
     .join("\n");
 
-    bot.send_message(user_chat_id, invite_message)
+    bot.send_message(user_id, invite_message)
         .parse_mode(teloxide::types::ParseMode::Html)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to send invite message");
-            e
-        })?;
+        .await?;
 
     tracing::info!("Invite message sent successfully");
     Ok(())

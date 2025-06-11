@@ -5,7 +5,9 @@ use poise::serenity_prelude::{self as serenity};
 
 use crate::env::Env;
 
-struct Data {}
+struct Data {
+    env: Arc<Env>,
+}
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
 
@@ -19,9 +21,10 @@ pub async fn init(env: Arc<Env>) {
         ..Default::default()
     };
 
+    let env_clone = env.clone();
     let framework = poise::Framework::builder()
         .options(options)
-        .setup(|ctx, ready, framework| Box::pin(setup(ctx, ready, framework)))
+        .setup(move |ctx, ready, framework| Box::pin(setup(ctx, ready, framework, env_clone)))
         .build();
 
     let mut client = serenity::ClientBuilder::new(&env.discord_token, intents)
@@ -44,6 +47,7 @@ async fn setup(
     ctx: &serenity::Context,
     ready: &serenity::Ready,
     framework: &poise::Framework<Data, Error>,
+    env: Arc<Env>,
 ) -> Result<Data, Error> {
     tracing::info!(
         bot_username = %ready.user.name,
@@ -63,7 +67,7 @@ async fn setup(
         command_count = framework.options().commands.len(),
         "Discord commands registered globally"
     );
-    Ok(Data {})
+    Ok(Data { env })
 }
 
 #[poise::command(slash_command)]
@@ -77,6 +81,25 @@ async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
         guild_id = ?guild_id,
         "Processing /telegram command"
     );
+
+    if let Err(error_message) = validate_command_permissions(ctx).await {
+        tracing::warn!(
+            user_id = %user.id,
+            error = %error_message,
+            "Command validation failed"
+        );
+
+        let reply = CreateReply::default()
+            .content(error_message)
+            .ephemeral(true);
+
+        ctx.send(reply).await.map_err(|e| {
+            tracing::error!(error = %e, user_id = %user.id, "Failed to send validation error response");
+            e
+        })?;
+
+        return Ok(());
+    }
 
     let author = serenity::CreateEmbedAuthor::new("felbot");
     let footer = serenity::CreateEmbedFooter::new("a carinha '-'").icon_url("https://yt3.googleusercontent.com/c0u2JGrq6Ke9i15R66z2u3RR0fY8RHFAkrocO8cGkRu2FLhke2DH_e_zjiW17_RnBHDzQw4KlA=s160-c-k-c0x00ffffff-no-rj");
@@ -97,5 +120,33 @@ async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
     })?;
 
     tracing::info!(user_id = %user.id, "Telegram command response sent successfully");
+    Ok(())
+}
+
+async fn validate_command_permissions(ctx: Context<'_>) -> Result<(), String> {
+    let env = &ctx.data().env;
+
+    let channel_id = ctx.channel_id();
+    if channel_id.get() != env.discord_channel_id {
+        return Err("Esse commando não pode ser usado nesse canal".to_string());
+    }
+
+    let member = match ctx.author_member().await {
+        Some(member) => member,
+        None => return Err("Não consegui verificar seus cargos".to_string()),
+    };
+
+    let user_has_allowed_role = member
+        .roles
+        .iter()
+        .any(|role_id| env.discord_allowed_roles.contains(&role_id.get()));
+
+    if !user_has_allowed_role {
+        return Err(
+            "Opa, pra entrar no grupo vc precisa ser sub na twitch ou membro no youtube"
+                .to_string(),
+        );
+    }
+
     Ok(())
 }
