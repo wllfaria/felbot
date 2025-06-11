@@ -11,7 +11,7 @@ use crate::templates::oauth_success_page;
 
 #[derive(Debug, Deserialize)]
 pub struct OAuthStartQueryParams {
-    pub telegram_id: String,
+    pub telegram_id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,7 +27,7 @@ struct DiscordTokenResponse {
 
 #[derive(Debug, Deserialize)]
 struct DiscordUser {
-    id: String,
+    id: i64,
     username: String,
 }
 
@@ -38,7 +38,7 @@ pub async fn oauth_start(
     let mut tx = state.pool.acquire().await?;
     let telegram_id = params.telegram_id;
 
-    let link_exists = UserLink::find_by_telegram_id(tx.as_mut(), &telegram_id)
+    let link_exists = UserLink::find_by_telegram_id(tx.as_mut(), telegram_id)
         .await?
         .is_some();
 
@@ -49,7 +49,7 @@ pub async fn oauth_start(
     }
 
     let token = uuid::Uuid::new_v4().to_string();
-    OAuthState::create(tx.as_mut(), &telegram_id, &token).await?;
+    OAuthState::create(tx.as_mut(), telegram_id, &token).await?;
 
     let discord_oauth_url = format!(
         "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
@@ -105,7 +105,7 @@ pub async fn oauth_callback(
         .json::<DiscordUser>()
         .await?;
 
-    let link_exists = UserLink::find_by_discord_id(tx.as_mut(), &discord_user.id)
+    let link_exists = UserLink::find_by_discord_id(tx.as_mut(), discord_user.id)
         .await?
         .is_some();
 
@@ -117,17 +117,12 @@ pub async fn oauth_callback(
 
     let user_link = UserLink::create_link(
         tx.as_mut(),
-        UserLinkPayload::new(
-            &discord_user.id,
-            &discord_user.username,
-            &oauth_state.telegram_id,
-        ),
+        UserLinkPayload::new(discord_user.id, oauth_state.telegram_id),
     )
     .await?;
 
     let action = TelegramAction::InviteUser {
-        telegram_id: oauth_state.telegram_id.clone(),
-        discord_id: discord_user.id.clone(),
+        telegram_id: oauth_state.telegram_id,
     };
 
     if let Err(e) = state.telegram_sender.send(action) {

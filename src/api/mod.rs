@@ -1,9 +1,8 @@
 mod error;
-mod models;
+pub mod models;
 mod oauth;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::routing::get;
@@ -21,16 +20,7 @@ pub struct AppState {
     pub pool: PgPool,
 }
 
-pub async fn init(env: Arc<Env>, telegram_sender: UnboundedSender<TelegramAction>) {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(10)
-        .acquire_timeout(Duration::from_secs(3))
-        .connect(&env.database_url)
-        .await
-        .unwrap();
-
-    sqlx::migrate!().run(&pool).await.unwrap();
-
+pub async fn init(env: Arc<Env>, pool: PgPool, telegram_sender: UnboundedSender<TelegramAction>) {
     let app_state = AppState {
         telegram_sender,
         pool,

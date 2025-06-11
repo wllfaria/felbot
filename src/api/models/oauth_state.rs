@@ -7,7 +7,7 @@ use sqlx::types::Uuid;
 pub struct OAuthState {
     pub id: Uuid,
     pub state_token: String,
-    pub telegram_id: String,
+    pub telegram_id: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -16,7 +16,7 @@ pub struct OAuthState {
 impl OAuthState {
     pub async fn create(
         executor: &mut PgConnection,
-        telegram_id: &str,
+        telegram_id: i64,
         token: &str,
     ) -> sqlx::Result<OAuthState> {
         let state = sqlx::query_as!(

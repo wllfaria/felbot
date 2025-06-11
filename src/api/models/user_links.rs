@@ -6,9 +6,8 @@ use sqlx::types::Uuid;
 #[derive(Debug, FromRow)]
 pub struct UserLink {
     pub id: Uuid,
-    pub discord_id: String,
-    pub discord_username: String,
-    pub telegram_id: String,
+    pub discord_id: i64,
+    pub telegram_id: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub added_to_group_at: Option<DateTime<Utc>>,
@@ -16,17 +15,15 @@ pub struct UserLink {
 }
 
 #[derive(Debug)]
-pub struct UserLinkPayload<'a> {
-    pub discord_id: &'a str,
-    pub discord_username: &'a str,
-    pub telegram_id: &'a str,
+pub struct UserLinkPayload {
+    pub discord_id: i64,
+    pub telegram_id: i64,
 }
 
-impl<'a> UserLinkPayload<'a> {
-    pub fn new(discord_id: &'a str, discord_username: &'a str, telegram_id: &'a str) -> Self {
+impl UserLinkPayload {
+    pub fn new(discord_id: i64, telegram_id: i64) -> Self {
         Self {
             discord_id,
-            discord_username,
             telegram_id,
         }
     }
@@ -35,17 +32,16 @@ impl<'a> UserLinkPayload<'a> {
 impl UserLink {
     pub async fn create_link(
         executor: &mut PgConnection,
-        new_link: UserLinkPayload<'_>,
+        new_link: UserLinkPayload,
     ) -> sqlx::Result<UserLink> {
         let user_link = sqlx::query_as!(
             UserLink,
             r#"
-            INSERT INTO user_links (discord_id, discord_username, telegram_id)
-            VALUES ($1, $2, $3)
+            INSERT INTO user_links (discord_id, telegram_id)
+            VALUES ($1, $2)
             RETURNING *
             "#,
             new_link.discord_id,
-            new_link.discord_username,
             new_link.telegram_id,
         )
         .fetch_one(executor)
@@ -56,7 +52,7 @@ impl UserLink {
 
     pub async fn find_by_discord_id(
         executor: &mut PgConnection,
-        discord_id: &str,
+        discord_id: i64,
     ) -> sqlx::Result<Option<UserLink>> {
         let user_link = sqlx::query_as!(
             UserLink,
@@ -71,7 +67,7 @@ impl UserLink {
 
     pub async fn find_by_telegram_id(
         executor: &mut PgConnection,
-        telegram_id: &str,
+        telegram_id: i64,
     ) -> sqlx::Result<Option<UserLink>> {
         let user_link = sqlx::query_as!(
             UserLink,
@@ -105,7 +101,7 @@ impl UserLink {
 
     pub async fn delete_by_discord_id(
         executor: &mut PgConnection,
-        discord_id: &str,
+        discord_id: i64,
     ) -> sqlx::Result<()> {
         sqlx::query!("DELETE FROM user_links WHERE discord_id = $1", discord_id)
             .execute(executor)

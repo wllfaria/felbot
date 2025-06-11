@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::env::Env;
 use crate::messages::TelegramAction;
 
-pub async fn init(env: Arc<Env>, mut receiver: UnboundedReceiver<TelegramAction>) {
+pub async fn init(env: Arc<Env>, receiver: UnboundedReceiver<TelegramAction>) {
     let bot = Bot::from_env();
 
     let new_bot = bot.clone();
@@ -30,17 +30,11 @@ enum Command {
     Start,
 }
 
-
 async fn answer(env: Arc<Env>, bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
-    let telegram_group_id = env
-        .telegram_group_id
-        .parse::<i64>()
-        .expect("TELEGRAM_GROUP_ID must be a number");
-
     match cmd {
         Command::Start => {
             // Only answer messages outside of the group
-            if msg.chat.id.0 == telegram_group_id {
+            if msg.chat.id.0 == env.telegram_group_id {
                 return Ok(());
             }
 
@@ -69,9 +63,9 @@ fn make_help_message(env: &Env, user: User) -> String {
     ].join("\n")
 }
 
-async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: ChatId) -> ResponseResult<()> {
+async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: UserId) -> ResponseResult<()> {
     let invite = bot
-        .create_chat_invite_link(env.telegram_group_id.clone())
+        .create_chat_invite_link(env.telegram_group_id.to_string())
         .await?;
     let link = invite.invite_link;
 
@@ -89,28 +83,12 @@ async fn send_invite_to_user(env: &Env, bot: &Bot, user_chat_id: ChatId) -> Resp
     Ok(())
 }
 
-async fn remove_user_from_group(
-    env: &Env,
-    bot: &Bot,
-    user_chat_id: ChatId,
-    username: &str,
-    reason: &str,
-) -> ResponseResult<()> {
-    let group_id = ChatId(env.telegram_group_id.parse::<i64>().unwrap());
-    
-    // Remove user from group
-    bot.ban_chat_member(group_id, user_chat_id).await?;
-    
-    // Send them a message explaining why
-    let message = format!(
-        "You have been removed from the group because: {}\n\nIf you believe this is an error, please contact an admin.",
-        reason
-    );
-    
-    if let Err(e) = bot.send_message(user_chat_id, message).await {
-        tracing::warn!("Could not send removal message to {}: {}", username, e);
-    }
-    
+async fn kick_user(env: &Env, bot: &Bot, user_id: UserId) -> ResponseResult<()> {
+    let group_id = ChatId(env.telegram_group_id);
+
+    bot.ban_chat_member(group_id, user_id).await?;
+    bot.unban_chat_member(group_id, user_id).await?;
+
     Ok(())
 }
 
@@ -121,26 +99,14 @@ async fn process_telegram_actions(
 ) {
     while let Some(action) = receiver.recv().await {
         match action {
-            TelegramAction::InviteUser { telegram_id, .. } => {
-                let chat_id = ChatId(telegram_id.parse::<i64>().unwrap_or_else(|e| {
-                    tracing::error!("Failed to parse telegram_id {telegram_id}: {e}");
-                    0
-                }));
-                if chat_id.0 != 0 {
-                    if let Err(e) = send_invite_to_user(&env, &bot, chat_id).await {
-                        tracing::error!("Failed to send invite to user {telegram_id}: {e}");
-                    }
+            TelegramAction::InviteUser { telegram_id } => {
+                if let Err(e) = send_invite_to_user(&env, &bot, UserId(telegram_id as u64)).await {
+                    tracing::error!("Failed to send invite to user {telegram_id}: {e}");
                 }
             }
-            TelegramAction::RemoveUser { telegram_id, discord_username, reason } => {
-                let chat_id = ChatId(telegram_id.parse::<i64>().unwrap_or_else(|e| {
-                    tracing::error!("Failed to parse telegram_id {telegram_id}: {e}");
-                    0
-                }));
-                if chat_id.0 != 0 {
-                    if let Err(e) = remove_user_from_group(&env, &bot, chat_id, &discord_username, &reason).await {
-                        tracing::error!("Failed to remove user {telegram_id}: {e}");
-                    }
+            TelegramAction::RemoveUser { telegram_id } => {
+                if let Err(e) = kick_user(&env, &bot, UserId(telegram_id as u64)).await {
+                    tracing::error!("Failed to remove user {telegram_id}: {e}");
                 }
             }
         }

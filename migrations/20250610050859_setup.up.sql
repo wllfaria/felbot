@@ -12,9 +12,8 @@ LANGUAGE plpgsql;
 
 CREATE TABLE IF NOT EXISTS user_links (
     id uuid DEFAULT uuid_generate_v4 () PRIMARY KEY,
-    discord_id varchar(20) NOT NULL UNIQUE,
-    discord_username varchar(32) NOT NULL,
-    telegram_id varchar(20) NOT NULL UNIQUE,
+    discord_id bigint NOT NULL UNIQUE,
+    telegram_id bigint NOT NULL UNIQUE,
     added_to_group_at timestamp with time zone,
     created_at timestamptz NOT NULL DEFAULT NOW(),
     updated_at timestamptz NOT NULL DEFAULT NOW(),
@@ -24,7 +23,7 @@ CREATE TABLE IF NOT EXISTS user_links (
 CREATE TABLE IF NOT EXISTS oauth_states (
     id uuid DEFAULT uuid_generate_v4 () PRIMARY KEY,
     state_token varchar(36) NOT NULL,
-    telegram_id varchar(20) NOT NULL,
+    telegram_id bigint NOT NULL,
     created_at timestamptz NOT NULL DEFAULT NOW(),
     updated_at timestamptz NOT NULL DEFAULT NOW(),
     expires_at timestamptz NOT NULL DEFAULT NOW() + interval '15 minutes'
