@@ -1,45 +1,56 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use poise::serenity_prelude::{GuildId, Http, Result, UserId};
+use poise::serenity_prelude::{GuildId, Http, UserId};
 use sqlx::{Connection, PgConnection, PgPool};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::api::models::user_links::UserLink;
 use crate::env::Env;
+use crate::error::{AppError, Result};
 use crate::messages::{CronAction, TelegramAction};
 
 pub async fn init(
     env: Arc<Env>,
     pool: PgPool,
+    cron_receiver: UnboundedReceiver<CronAction>,
+    telegram_sender: UnboundedSender<TelegramAction>,
+) {
+    tokio::spawn(manual_trigger_runner(
+        env.clone(),
+        pool.clone(),
+        cron_receiver,
+        telegram_sender.clone(),
+    ));
+
+    cron_job_runner(env, pool, telegram_sender).await;
+}
+
+async fn manual_trigger_runner(
+    env: Arc<Env>,
+    pool: PgPool,
     mut cron_receiver: UnboundedReceiver<CronAction>,
+    telegram_sender: UnboundedSender<TelegramAction>,
+) {
+    while (cron_receiver.recv().await).is_some() {
+        tracing::info!("executing manually triggered cron job");
+        let Ok(mut conn) = pool.acquire().await else {
+            tracing::error!("faield to acquire pool connection, skipping cron job");
+            continue;
+        };
+
+        run_cron_job(env.clone(), conn.as_mut(), telegram_sender.clone()).await;
+    }
+}
+
+async fn cron_job_runner(
+    env: Arc<Env>,
+    pool: PgPool,
     telegram_sender: UnboundedSender<TelegramAction>,
 ) {
     const ONE_DAY_IN_SECS: u64 = 24 * 60 * 60;
     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(ONE_DAY_IN_SECS));
-
-    tracing::info!(
-        interval_hours = ONE_DAY_IN_SECS / 3600,
-        "Cron service initialized, starting role verification scheduler"
-    );
-
-    tokio::spawn({
-        let telegram_sender = telegram_sender.clone();
-        let pool = pool.clone();
-        let env = env.clone();
-
-        async move {
-            while (cron_receiver.recv().await).is_some() {
-                tracing::info!("executing manually triggered cron job");
-                let Ok(mut conn) = pool.acquire().await else {
-                    tracing::error!("faield to acquire pool connection, skipping cron job");
-                    continue;
-                };
-
-                run_cron_job(env.clone(), conn.as_mut(), telegram_sender.clone()).await;
-            }
-        }
-    });
+    tracing::info!("Cron service initialized, starting role verification scheduler");
 
     loop {
         interval.tick().await;
@@ -50,6 +61,21 @@ pub async fn init(
 
         run_cron_job(env.clone(), conn.as_mut(), telegram_sender.clone()).await;
     }
+}
+
+async fn with_tx<F, T>(conn: &mut PgConnection, f: F) -> Result<T>
+where
+    F: AsyncFnOnce(&mut PgConnection) -> Result<T>,
+{
+    let mut tx = Connection::begin(conn).await?;
+    let result = f(tx.as_mut()).await;
+
+    match result {
+        Ok(_) => tx.commit().await?,
+        Err(_) => tx.rollback().await?,
+    }
+
+    result
 }
 
 async fn run_cron_job(
@@ -68,11 +94,9 @@ async fn run_cron_job(
         }
     };
 
-    match check_user_roles(env.clone(), tx.as_mut(), telegram_sender.clone()).await {
-        Ok(stats) => {
-            if let Err(e) = tx.commit().await {
-                tracing::error!(error = %e, "Failed to commit transaction");
-            } else {
+    match check_roles(env.clone(), tx.as_mut(), telegram_sender.clone()).await {
+        Ok(stats) => match tx.commit().await {
+            Ok(_) => {
                 let cycle_duration = cycle_start.elapsed();
                 tracing::info!(
                     duration_ms = cycle_duration.as_millis(),
@@ -82,18 +106,19 @@ async fn run_cron_job(
                     "Role verification cycle completed successfully"
                 );
             }
-        }
-        Err(e) => {
-            if let Err(rollback_err) = tx.rollback().await {
-                tracing::error!(error = %rollback_err, "Failed to rollback transaction");
+            Err(e) => tracing::error!(error = %e, "Failed to commit transaction"),
+        },
+        Err(e) => match tx.rollback().await {
+            Ok(_) => {
+                let cycle_duration = cycle_start.elapsed();
+                tracing::error!(
+                    error = %e,
+                    duration_ms = cycle_duration.as_millis(),
+                    "Role verification cycle failed"
+                );
             }
-            let cycle_duration = cycle_start.elapsed();
-            tracing::error!(
-                error = %e,
-                duration_ms = cycle_duration.as_millis(),
-                "Role verification cycle failed"
-            );
-        }
+            Err(e) => tracing::error!(error = %e, "Failed to rollback transaction"),
+        },
     }
 }
 
@@ -105,21 +130,24 @@ struct VerificationStats {
 }
 
 #[tracing::instrument(skip_all)]
-async fn check_user_roles(
+async fn check_roles(
     env: Arc<Env>,
     conn: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
-) -> Result<VerificationStats, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<VerificationStats> {
     let start_time = Instant::now();
     let mut stats = VerificationStats::default();
 
     let discord_client = Http::new(&env.discord_token);
     let guild_id = GuildId::new(env.discord_guild_id);
 
-    let users = UserLink::get_all_users(conn).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to fetch users from database");
-        e
-    })?;
+    let users = match UserLink::get_all_users(conn).await {
+        Ok(users) => users,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to fetch users from database");
+            return Err(AppError::Database(e));
+        }
+    };
 
     let total_users = users.len();
     tracing::info!(
@@ -145,18 +173,16 @@ async fn check_user_roles(
         match has_allowed_roles(&discord_client, &env, &user, guild_id).await {
             Ok(has_roles) => {
                 let check_duration = user_start.elapsed();
+                let duration_ms = check_duration.as_millis();
 
                 if has_roles {
-                    tracing::debug!(
-                        duration_ms = check_duration.as_millis(),
-                        "User has valid roles"
-                    );
+                    tracing::debug!(duration_ms = duration_ms, "User has valid roles");
                     continue;
                 }
 
                 tracing::info!(
-                    duration_ms = check_duration.as_millis(),
-                    "User no longer has required roles, removing"
+                    duration_ms = duration_ms,
+                    "User no longer has required roles"
                 );
 
                 let send_result = telegram_sender.send(TelegramAction::RemoveUser {

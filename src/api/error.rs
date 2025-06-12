@@ -20,8 +20,20 @@ pub enum ApiError {
     Database(sqlx::Error),
 
     #[display("Internal server error: {message}")]
-    #[from]
     InternalError { message: String },
+
+    #[display("Bad request: {message}")]
+    BadRequest { message: String },
+}
+
+impl ApiError {
+    pub fn discord_api(message: String) -> Self {
+        Self::DiscordApi { message }
+    }
+
+    pub fn bad_request(message: String) -> Self {
+        Self::BadRequest { message }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -37,6 +49,7 @@ impl IntoResponse for ApiError {
                 "Database error occurred".to_string(),
             ),
             ApiError::ForbiddenRequest { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
+            ApiError::BadRequest { .. } => (StatusCode::BAD_REQUEST, self.to_string()),
             ApiError::InternalError { .. } => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
 
@@ -55,6 +68,9 @@ impl IntoResponse for ApiError {
             }
             ApiError::InternalError { message } => {
                 tracing::error!(message = %message, "Internal error");
+            }
+            ApiError::BadRequest { message } => {
+                tracing::error!(message = %message, "Bad request");
             }
         }
 

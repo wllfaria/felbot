@@ -11,6 +11,7 @@ mod env;
 mod api;
 mod cron;
 mod discord;
+mod error;
 mod messages;
 mod telegram;
 mod templates;
