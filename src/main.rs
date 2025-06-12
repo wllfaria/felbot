@@ -17,20 +17,6 @@ mod templates;
 
 fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::from("info");
-    // let grafana_loki_url = env!("GRAFANA_LOKI_URL");
-
-    // let (layer, task) = tracing_loki::builder()
-    //     .label("host", "fly")
-    //     .unwrap()
-    //     .label("app", "my-bot")
-    //     .unwrap()
-    //     .extra_field("pid", format!("{}", std::process::id()))
-    //     .unwrap()
-    //     .build_url(url::Url::parse(&grafana_loki_url).unwrap())
-    //     .unwrap();
-    //
-    // tokio::spawn(task);
-
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(true);
