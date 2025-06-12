@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            INSERT INTO user_links (discord_id, discord_username, telegram_id)\n            VALUES ($1, $2, $3)\n            RETURNING *\n            ",
+  "query": "\n            INSERT INTO user_links (discord_id, telegram_id)\n            VALUES ($1, $2)\n            RETURNING *\n            ",
   "describe": {
     "columns": [
       {
@@ -11,48 +11,41 @@
       {
         "ordinal": 1,
         "name": "discord_id",
-        "type_info": "Varchar"
+        "type_info": "Int8"
       },
       {
         "ordinal": 2,
-        "name": "discord_username",
-        "type_info": "Varchar"
+        "name": "telegram_id",
+        "type_info": "Int8"
       },
       {
         "ordinal": 3,
-        "name": "telegram_id",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 4,
         "name": "added_to_group_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "last_subscription_check",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Varchar",
-        "Varchar",
-        "Varchar"
+        "Int8",
+        "Int8"
       ]
     },
     "nullable": [
-      false,
       false,
       false,
       false,
@@ -62,5 +55,5 @@
       true
     ]
   },
-  "hash": "015dc42bd8fca9108e73c3677abf332ce1470bb7636801b50c82d55e837a164a"
+  "hash": "e2c2497213431b339dcb51ade37f5b8a3b0a5d62f8058359e438cda0dea92806"
 }

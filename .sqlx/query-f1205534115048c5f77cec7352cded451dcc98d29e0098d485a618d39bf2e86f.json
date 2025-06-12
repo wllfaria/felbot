@@ -11,35 +11,30 @@
       {
         "ordinal": 1,
         "name": "discord_id",
-        "type_info": "Varchar"
+        "type_info": "Int8"
       },
       {
         "ordinal": 2,
-        "name": "discord_username",
-        "type_info": "Varchar"
+        "name": "telegram_id",
+        "type_info": "Int8"
       },
       {
         "ordinal": 3,
-        "name": "telegram_id",
-        "type_info": "Varchar"
-      },
-      {
-        "ordinal": 4,
         "name": "added_to_group_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "last_subscription_check",
         "type_info": "Timestamptz"
       }
@@ -48,7 +43,6 @@
       "Left": []
     },
     "nullable": [
-      false,
       false,
       false,
       false,
