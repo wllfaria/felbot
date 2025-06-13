@@ -14,6 +14,7 @@ mod database;
 mod discord;
 mod error;
 mod messages;
+mod services;
 mod telegram;
 mod templates;
 mod utils;

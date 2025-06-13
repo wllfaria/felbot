@@ -10,48 +10,98 @@ pub fn base_layout(title: &str, content: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 style {
                     "
+                    :root {
+                        --bg-primary: #1a1a1a;
+                        --bg-secondary: #2d2d2d;
+                        --text-primary: #ffffff;
+                        --text-secondary: #a0a0a0;
+                        --accent-success: #4ade80;
+                        --accent-error: #f87171;
+                        --accent-link: #60a5fa;
+                    }
+
                     body {
-                        font-family: Arial, sans-serif;
+                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                         text-align: center;
-                        padding: 50px;
+                        padding: 0;
                         margin: 0;
-                        background-color: #f5f5f5;
+                        min-height: 100vh;
+                        background-color: var(--bg-primary);
+                        color: var(--text-primary);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
                     }
+
                     .container {
-                        max-width: 600px;
-                        margin: 0 auto;
-                        background: white;
+                        width: 100%;
+                        max-width: 480px;
+                        margin: 20px;
+                        background: var(--bg-secondary);
                         padding: 40px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                        border-radius: 16px;
+                        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
                     }
+
                     .success {
-                        color: #28a745;
-                        font-size: 24px;
-                        margin-bottom: 20px;
+                        color: var(--accent-success);
+                        font-size: 28px;
+                        font-weight: 600;
+                        margin-bottom: 24px;
+                        letter-spacing: -0.5px;
                     }
+
                     .error {
-                        color: #dc3545;
-                        font-size: 24px;
-                        margin-bottom: 20px;
+                        color: var(--accent-error);
+                        font-size: 28px;
+                        font-weight: 600;
+                        margin-bottom: 24px;
+                        letter-spacing: -0.5px;
                     }
+
+                    p {
+                        color: var(--text-secondary);
+                        font-size: 16px;
+                        line-height: 1.6;
+                        margin: 16px 0;
+                    }
+
                     .info {
-                        color: #666;
-                        margin: 15px 0;
+                        color: var(--text-secondary);
+                        font-size: 14px;
+                        margin: 24px 0;
                     }
+
                     .message {
-                        color: #666;
-                        margin: 15px 0;
+                        color: var(--text-secondary);
+                        font-size: 16px;
+                        margin: 24px 0;
+                        padding: 16px;
+                        background: rgba(255, 255, 255, 0.05);
+                        border-radius: 8px;
                     }
+
                     a {
-                        color: #007bff;
+                        color: var(--accent-link);
                         text-decoration: none;
+                        font-weight: 500;
+                        transition: opacity 0.2s ease;
                     }
+
                     a:hover {
-                        text-decoration: underline;
+                        opacity: 0.8;
                     }
+
                     strong {
-                        color: #333;
+                        color: var(--text-primary);
+                        font-weight: 600;
+                    }
+
+                    @media (max-width: 480px) {
+                        .container {
+                            margin: 16px;
+                            padding: 32px 24px;
+                        }
                     }
                     "
                 }

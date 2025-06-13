@@ -1,16 +1,15 @@
 use axum::extract::{Query, State};
 use axum::response::{Html, Redirect};
-use reqwest::Client;
 use serde::Deserialize;
 use sqlx::PgConnection;
 use validator::Validate;
 
 use super::AppState;
 use super::error::{ApiError, Result};
-use super::models::oauth_state::OAuthState;
-use super::models::user_links::{UserLink, UserLinkPayload};
-use crate::env::Env;
+use crate::database::models::oauth_state::OAuthState;
+use crate::database::models::user_links::{UserLink, UserLinkPayload};
 use crate::messages::TelegramAction;
+use crate::services::discord::DiscordService;
 use crate::templates::oauth_success_page;
 
 #[derive(Debug, Deserialize, Validate)]
@@ -25,21 +24,10 @@ pub struct OAuthCallbackQueryParams {
     pub state: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct DiscordTokenResponse {
-    access_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DiscordUser {
-    id: String,
-    username: String,
-}
-
 #[tracing::instrument(skip(state), fields(telegram_id = params.telegram_id))]
 pub async fn oauth_start(
     Query(params): Query<OAuthStartQueryParams>,
-    State(state): State<AppState>,
+    State(state): State<AppState<impl DiscordService>>,
 ) -> Result<Redirect> {
     tracing::info!("Starting OAuth flow");
 
@@ -77,13 +65,7 @@ pub async fn oauth_start(
         return Err(ApiError::Database(e));
     }
 
-    let discord_oauth_url = format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
-        state.env.discord_client_id,
-        urlencoding::encode(&state.env.discord_oauth_redirect),
-        token
-    );
-
+    let discord_oauth_url = state.discord_service.get_oauth_url(&state.env, &token);
     tracing::info!(redirect_url = %discord_oauth_url, "Redirecting to Discord OAuth");
     Ok(Redirect::to(&discord_oauth_url))
 }
@@ -91,7 +73,7 @@ pub async fn oauth_start(
 #[tracing::instrument(skip(state), fields(state_token = %params.state))]
 pub async fn oauth_callback(
     Query(params): Query<OAuthCallbackQueryParams>,
-    State(state): State<AppState>,
+    State(state): State<AppState<impl DiscordService>>,
 ) -> Result<Html<String>> {
     tracing::info!("Processing OAuth callback");
 
@@ -108,9 +90,15 @@ pub async fn oauth_callback(
     let telegram_id = oauth_state.telegram_id;
     tracing::info!(telegram_id = %telegram_id, "Found valid OAuth state");
 
-    let client = reqwest::Client::new();
-    let discord_token = get_discord_access_token(&state.env, &params.code, &client).await?;
-    let discord_user = get_discord_user(&discord_token.access_token, &client).await?;
+    let discord_token = state
+        .discord_service
+        .get_access_token(state.env.clone(), params.code)
+        .await?;
+
+    let discord_user = state
+        .discord_service
+        .get_user_info(discord_token.access_token)
+        .await?;
 
     tracing::info!(
         discord_id = %discord_user.id,
@@ -173,86 +161,6 @@ async fn get_oauth_state(conn: &mut PgConnection, token: &str) -> Result<OAuthSt
     }
 }
 
-async fn get_discord_access_token(
-    env: &Env,
-    code: &str,
-    client: &Client,
-) -> Result<DiscordTokenResponse> {
-    tracing::debug!("Exchanging authorization code for access token");
-
-    let form_data = [
-        ("client_id", env.discord_client_id.as_str()),
-        ("client_secret", env.discord_client_secret.as_str()),
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("redirect_uri", env.discord_oauth_redirect.as_str()),
-    ];
-
-    let token_result = client
-        .post("https://discord.com/api/oauth2/token")
-        .form(&form_data)
-        .send()
-        .await;
-
-    let response = match token_result {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to send token exchange request");
-            return Err(ApiError::Http(e));
-        }
-    };
-
-    let response = match response.error_for_status() {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::error!(error = %e, "Discord token exchange failed");
-            return Err(ApiError::discord_api(format!("Token exchange failed: {e}")));
-        }
-    };
-
-    match response.json().await {
-        Ok(response) => Ok(response),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse token response");
-            Err(ApiError::discord_api(e.to_string()))
-        }
-    }
-}
-
-async fn get_discord_user(discord_token: &str, client: &Client) -> Result<DiscordUser> {
-    tracing::debug!("Fetching Discord user information");
-    let user_result = client
-        .get("https://discord.com/api/users/@me")
-        .bearer_auth(discord_token)
-        .send()
-        .await;
-
-    let response = match user_result {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to send user info request");
-            return Err(ApiError::Http(e));
-        }
-    };
-
-    let response = match response.error_for_status() {
-        Ok(response) => response,
-        Err(e) => {
-            let message = format!("User info request failed: {e}");
-            tracing::error!(error = %e, "Discord user info request failed");
-            return Err(ApiError::discord_api(message));
-        }
-    };
-
-    match response.json().await {
-        Ok(response) => Ok(response),
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse user response");
-            Err(ApiError::discord_api(e.to_string()))
-        }
-    }
-}
-
 async fn can_link_accounts(conn: &mut PgConnection, discord_id: i64) -> Result<bool> {
     match UserLink::find_by_discord_id(conn, discord_id).await? {
         Some(_) => {
@@ -274,6 +182,263 @@ async fn create_user_link(
     Ok(user_link)
 }
 
-// fn user_has_required_roles(user_roles: &[u64], allowed_roles: &[u64]) -> bool {
-//     user_roles.iter().any(|role| allowed_roles.contains(role))
-// }
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use sqlx::PgPool;
+    use tokio::sync::mpsc::UnboundedReceiver;
+
+    use super::*;
+    use crate::env::Env;
+    use crate::messages::CronAction;
+    use crate::services::discord::{DiscordService, DiscordTokenResponse, DiscordUser};
+    use crate::utils::BoxFuture;
+
+    struct TestContext<D: DiscordService> {
+        params: Query<OAuthStartQueryParams>,
+        state: State<AppState<D>>,
+        _cron_receiver: UnboundedReceiver<CronAction>,
+        _telegram_receiver: UnboundedReceiver<TelegramAction>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct MockDiscordService {
+        discord_user: DiscordUser,
+        should_fail_token: bool,
+        should_fail_user_info: bool,
+    }
+
+    impl MockDiscordService {
+        fn new() -> Self {
+            Self {
+                discord_user: DiscordUser {
+                    id: "123".to_string(),
+                    username: "test_user".to_string(),
+                },
+                should_fail_token: false,
+                should_fail_user_info: false,
+            }
+        }
+
+        fn with_failing_token(mut self) -> Self {
+            self.should_fail_token = true;
+            self
+        }
+
+        fn with_failing_user_info(mut self) -> Self {
+            self.should_fail_user_info = true;
+            self
+        }
+    }
+
+    impl DiscordService for MockDiscordService {
+        fn get_oauth_url(&self, env: &Env, token: &str) -> String {
+            format!(
+                "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}",
+                &env.discord_client_id,
+                urlencoding::encode(&env.discord_oauth_redirect),
+                token,
+            )
+        }
+
+        fn get_access_token(
+            &self,
+            _: Arc<Env>,
+            _: String,
+        ) -> BoxFuture<Result<DiscordTokenResponse>> {
+            let should_fail = self.should_fail_token;
+            Box::pin(async move {
+                if should_fail {
+                    Err(ApiError::discord_api("Failed to get access token".into()))
+                } else {
+                    Ok(DiscordTokenResponse {
+                        access_token: "sample_access_token".into(),
+                    })
+                }
+            })
+        }
+
+        fn get_user_info(&self, _: String) -> BoxFuture<Result<DiscordUser>> {
+            let should_fail = self.should_fail_user_info;
+            let user = self.discord_user.clone();
+            Box::pin(async move {
+                if should_fail {
+                    Err(ApiError::discord_api("Failed to get user info".into()))
+                } else {
+                    Ok(user)
+                }
+            })
+        }
+    }
+
+    fn setup_test(
+        pool: PgPool,
+        params: OAuthStartQueryParams,
+        discord_service: MockDiscordService,
+    ) -> TestContext<MockDiscordService> {
+        let params = Query(params);
+        let (cron_sender, _cron_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (telegram_sender, _telegram_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let env = Arc::new(Env::empty());
+
+        let state = State(AppState {
+            telegram_sender,
+            cron_sender,
+            env,
+            pool,
+            discord_service: Arc::new(discord_service),
+        });
+
+        TestContext {
+            params,
+            state,
+            _cron_receiver,
+            _telegram_receiver,
+        }
+    }
+
+    #[sqlx::test]
+    async fn test_invalid_telegram_id(pool: PgPool) {
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: -1 },
+            MockDiscordService::new(),
+        );
+
+        let result = oauth_start(setup.params, setup.state).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::BadRequest { .. })));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Bad request: invalid discord id for oauth flow"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_successful_redirect(pool: PgPool) {
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 123 },
+            MockDiscordService::new(),
+        );
+
+        let result = oauth_start(setup.params, setup.state).await.unwrap();
+        assert!(matches!(result, Redirect { .. }));
+    }
+
+    #[sqlx::test]
+    async fn test_already_linked_account(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let payload = UserLinkPayload::new(123, 456);
+        UserLink::create_link(&mut conn, payload).await.unwrap();
+
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 456 },
+            MockDiscordService::new(),
+        );
+
+        let result = oauth_start(setup.params, setup.state).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::ForbiddenRequest { .. })));
+    }
+
+    #[sqlx::test]
+    async fn test_successful_callback(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let token = "test_token".to_string();
+        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 123 },
+            MockDiscordService::new(),
+        );
+
+        let result = oauth_callback(
+            Query(OAuthCallbackQueryParams {
+                code: "test_code".to_string(),
+                state: token,
+            }),
+            setup.state,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        let html = result.unwrap();
+        assert!(html.0.contains("test_user"));
+    }
+
+    #[sqlx::test]
+    async fn test_invalid_state(pool: PgPool) {
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 123 },
+            MockDiscordService::new(),
+        );
+
+        let result = oauth_callback(
+            Query(OAuthCallbackQueryParams {
+                code: "test_code".to_string(),
+                state: "invalid_token".to_string(),
+            }),
+            setup.state,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::ForbiddenRequest { .. })));
+    }
+
+    #[sqlx::test]
+    async fn test_discord_token_failure(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let token = "test_token".to_string();
+        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 123 },
+            MockDiscordService::new().with_failing_token(),
+        );
+
+        let result = oauth_callback(
+            Query(OAuthCallbackQueryParams {
+                code: "test_code".to_string(),
+                state: token,
+            }),
+            setup.state,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::DiscordApi { .. })));
+    }
+
+    #[sqlx::test]
+    async fn test_user_info_failure(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let token = "test_token".to_string();
+        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+
+        let setup = setup_test(
+            pool,
+            OAuthStartQueryParams { telegram_id: 123 },
+            MockDiscordService::new().with_failing_user_info(),
+        );
+
+        let result = oauth_callback(
+            Query(OAuthCallbackQueryParams {
+                code: "test_code".to_string(),
+                state: token,
+            }),
+            setup.state,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(ApiError::DiscordApi { .. })));
+    }
+}

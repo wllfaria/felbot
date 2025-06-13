@@ -1,7 +1,6 @@
 mod cron;
 pub mod error;
 mod middleware;
-pub mod models;
 mod oauth;
 
 use std::sync::Arc;
@@ -16,13 +15,18 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::env::Env;
 use crate::messages::{CronAction, TelegramAction};
+use crate::services::discord::{DiscordService, DiscordServiceImpl};
 
 #[derive(Debug, Clone)]
-pub struct AppState {
+pub struct AppState<D>
+where
+    D: DiscordService + ?Sized,
+{
     pub telegram_sender: UnboundedSender<TelegramAction>,
     pub cron_sender: UnboundedSender<CronAction>,
     pub env: Arc<Env>,
     pub pool: PgPool,
+    pub discord_service: Arc<D>,
 }
 
 pub async fn init(
@@ -33,11 +37,14 @@ pub async fn init(
 ) {
     tracing::info!("Initializing API service");
 
+    let discord_service = Arc::new(DiscordServiceImpl::new());
+
     let app_state = AppState {
         telegram_sender,
         cron_sender,
         pool,
         env: env.clone(),
+        discord_service,
     };
 
     let app = Router::new()

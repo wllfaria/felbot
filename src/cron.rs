@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use poise::serenity_prelude::{GuildId, Http, UserId};
-use sqlx::{Connection, PgConnection, PgPool};
+use sqlx::{PgConnection, PgPool};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::api::models::user_links::UserLink;
+use crate::database::models::user_links::UserLink;
 use crate::env::Env;
 use crate::error::{AppError, Result};
 use crate::messages::{CronAction, TelegramAction};

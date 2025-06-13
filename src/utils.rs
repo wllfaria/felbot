@@ -1,6 +1,10 @@
+use std::pin::Pin;
+
 use sqlx::PgConnection;
 
 use crate::error::Result;
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub async fn with_tx<F, T>(conn: &mut PgConnection, f: F) -> Result<T>
 where

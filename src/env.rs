@@ -77,4 +77,22 @@ impl Env {
             telegram_group_id,
         }
     }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            port: Default::default(),
+            database_url: Default::default(),
+            account_link_url: Default::default(),
+            cron_secret: Default::default(),
+            discord_token: Default::default(),
+            discord_client_id: Default::default(),
+            discord_client_secret: Default::default(),
+            discord_oauth_redirect: Default::default(),
+            discord_guild_id: Default::default(),
+            discord_allowed_roles: Default::default(),
+            discord_channel_id: Default::default(),
+            telegram_group_id: Default::default(),
+        }
+    }
 }

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::AppState;
 use super::error::{ApiError, Result};
 use crate::messages::CronAction;
+use crate::services::discord::DiscordService;
 
 #[derive(Debug, Serialize)]
 pub struct CronResponse {
@@ -17,7 +18,7 @@ pub struct CronQuery {
 }
 
 pub async fn cron_start(
-    State(state): State<AppState>,
+    State(state): State<AppState<impl DiscordService>>,
     Query(params): Query<CronQuery>,
 ) -> Result<Json<CronResponse>> {
     if state.env.cron_secret != params.secret {

@@ -7,7 +7,7 @@ use poise::serenity_prelude::{self as serenity};
 
 use crate::env::Env;
 
-struct Data {
+pub struct Data {
     env: Arc<Env>,
 }
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
