@@ -10,11 +10,13 @@ mod env;
 
 mod api;
 mod cron;
+mod database;
 mod discord;
 mod error;
 mod messages;
 mod telegram;
 mod templates;
+mod utils;
 
 fn init_tracing() {
     let env_filter = tracing_subscriber::EnvFilter::from("info");

@@ -9,6 +9,7 @@ use crate::api::models::user_links::UserLink;
 use crate::env::Env;
 use crate::error::{AppError, Result};
 use crate::messages::{CronAction, TelegramAction};
+use crate::utils::with_tx;
 
 pub async fn init(
     env: Arc<Env>,
@@ -63,21 +64,6 @@ async fn cron_job_runner(
     }
 }
 
-async fn with_tx<F, T>(conn: &mut PgConnection, f: F) -> Result<T>
-where
-    F: AsyncFnOnce(&mut PgConnection) -> Result<T>,
-{
-    let mut tx = Connection::begin(conn).await?;
-    let result = f(tx.as_mut()).await;
-
-    match result {
-        Ok(_) => tx.commit().await?,
-        Err(_) => tx.rollback().await?,
-    }
-
-    result
-}
-
 async fn run_cron_job(
     env: Arc<Env>,
     pool: &mut PgConnection,
@@ -86,40 +72,27 @@ async fn run_cron_job(
     let cycle_start = Instant::now();
     tracing::info!("Starting role verification cycle");
 
-    let mut tx = match PgConnection::begin(pool).await {
-        Ok(tx) => tx,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to start database transaction, skipping cycle");
-            return;
-        }
-    };
+    let stats = with_tx(pool, async |tx| {
+        check_user_roles(env.clone(), tx, telegram_sender).await
+    })
+    .await;
 
-    match check_roles(env.clone(), tx.as_mut(), telegram_sender.clone()).await {
-        Ok(stats) => match tx.commit().await {
-            Ok(_) => {
-                let cycle_duration = cycle_start.elapsed();
-                tracing::info!(
-                    duration_ms = cycle_duration.as_millis(),
-                    users_checked = stats.users_checked,
-                    users_removed = stats.users_removed,
-                    users_failed = stats.users_failed,
-                    "Role verification cycle completed successfully"
-                );
-            }
-            Err(e) => tracing::error!(error = %e, "Failed to commit transaction"),
-        },
-        Err(e) => match tx.rollback().await {
-            Ok(_) => {
-                let cycle_duration = cycle_start.elapsed();
-                tracing::error!(
-                    error = %e,
-                    duration_ms = cycle_duration.as_millis(),
-                    "Role verification cycle failed"
-                );
-            }
-            Err(e) => tracing::error!(error = %e, "Failed to rollback transaction"),
-        },
-    }
+    let cycle_duration = cycle_start.elapsed();
+
+    match stats {
+        Ok(stats) => tracing::info!(
+            duration_ms = cycle_duration.as_millis(),
+            users_checked = stats.users_checked,
+            users_removed = stats.users_removed,
+            users_failed = stats.users_failed,
+            "Role verification cycle completed successfully"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            duration_ms = cycle_duration.as_millis(),
+            "Role verification cycle failed"
+        ),
+    };
 }
 
 #[derive(Debug, Default)]
@@ -130,7 +103,7 @@ struct VerificationStats {
 }
 
 #[tracing::instrument(skip_all)]
-async fn check_roles(
+async fn check_user_roles(
     env: Arc<Env>,
     conn: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
@@ -170,7 +143,8 @@ async fn check_roles(
 
         tracing::debug!("Checking user roles");
 
-        match has_allowed_roles(&discord_client, &env, &user, guild_id).await {
+        match has_allowed_roles(&discord_client, &env.discord_allowed_roles, guild_id, &user).await
+        {
             Ok(has_roles) => {
                 let check_duration = user_start.elapsed();
                 let duration_ms = check_duration.as_millis();
@@ -228,35 +202,26 @@ async fn check_roles(
     Ok(stats)
 }
 
-#[tracing::instrument(skip(http, env), fields(discord_id = user.discord_id))]
+#[tracing::instrument(skip_all, fields(discord_id = user.discord_id))]
 async fn has_allowed_roles(
     http: &Http,
-    env: &Env,
-    user: &UserLink,
+    allowed_roles: &[u64],
     guild_id: GuildId,
+    user: &UserLink,
 ) -> Result<bool> {
     let user_id = UserId::new(user.discord_id as u64);
 
     tracing::debug!("Fetching Discord member information");
 
     let member = http.get_member(guild_id, user_id).await.map_err(|e| {
-        tracing::debug!(error = %e, "Failed to fetch Discord member (user may have left server)");
+        tracing::debug!(error = %e, "Failed to fetch Discord member");
         e
     })?;
 
     let user_roles: Vec<u64> = member.roles.iter().map(|role| role.get()).collect();
-    let allowed_roles = &env.discord_allowed_roles;
-
     let has_allowed_role = user_roles
         .iter()
         .any(|role_id| allowed_roles.contains(role_id));
-
-    tracing::debug!(
-        user_roles = ?user_roles,
-        allowed_roles = ?allowed_roles,
-        has_allowed_role = has_allowed_role,
-        "Role verification completed"
-    );
 
     Ok(has_allowed_role)
 }

@@ -113,21 +113,24 @@ impl UserLink {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sqlx::PgPool;
+
+    use super::*;
 
     #[sqlx::test]
     async fn test_create_and_find_user_link(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload = UserLinkPayload::new(123456, 789012);
         let created = UserLink::create_link(&mut conn, payload).await.unwrap();
-        
+
         assert_eq!(created.discord_id, 123456);
         assert_eq!(created.telegram_id, 789012);
         assert!(created.added_to_group_at.is_none());
-        
-        let found = UserLink::find_by_discord_id(&mut conn, 123456).await.unwrap();
+
+        let found = UserLink::find_by_discord_id(&mut conn, 123456)
+            .await
+            .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().telegram_id, 789012);
     }
@@ -135,11 +138,13 @@ mod tests {
     #[sqlx::test]
     async fn test_find_by_telegram_id(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload = UserLinkPayload::new(123456, 789012);
         UserLink::create_link(&mut conn, payload).await.unwrap();
-        
-        let found = UserLink::find_by_telegram_id(&mut conn, 789012).await.unwrap();
+
+        let found = UserLink::find_by_telegram_id(&mut conn, 789012)
+            .await
+            .unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().discord_id, 123456);
     }
@@ -147,57 +152,68 @@ mod tests {
     #[sqlx::test]
     async fn test_duplicate_discord_id(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload1 = UserLinkPayload::new(123456, 789012);
         UserLink::create_link(&mut conn, payload1).await.unwrap();
-        
+
         let payload2 = UserLinkPayload::new(123456, 999999);
         let result = UserLink::create_link(&mut conn, payload2).await;
-        
+
         assert!(result.is_err()); // Should fail due to unique constraint
     }
 
     #[sqlx::test]
     async fn test_duplicate_telegram_id(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload1 = UserLinkPayload::new(123456, 789012);
         UserLink::create_link(&mut conn, payload1).await.unwrap();
-        
+
         let payload2 = UserLinkPayload::new(999999, 789012);
         let result = UserLink::create_link(&mut conn, payload2).await;
-        
+
         assert!(result.is_err()); // Should fail due to unique constraint
     }
 
     #[sqlx::test]
     async fn test_mark_added_to_group(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload = UserLinkPayload::new(123456, 789012);
         let created = UserLink::create_link(&mut conn, payload).await.unwrap();
-        
+
         assert!(created.added_to_group_at.is_none());
-        
-        UserLink::mark_added_to_group(&mut conn, &created.id).await.unwrap();
-        
-        let updated = UserLink::find_by_discord_id(&mut conn, 123456).await.unwrap().unwrap();
+
+        UserLink::mark_added_to_group(&mut conn, &created.id)
+            .await
+            .unwrap();
+
+        let updated = UserLink::find_by_discord_id(&mut conn, 123456)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(updated.added_to_group_at.is_some());
     }
 
     #[sqlx::test]
     async fn test_delete_by_discord_id(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
-        
+
         let payload = UserLinkPayload::new(123456, 789012);
         UserLink::create_link(&mut conn, payload).await.unwrap();
-        
-        let found_before = UserLink::find_by_discord_id(&mut conn, 123456).await.unwrap();
+
+        let found_before = UserLink::find_by_discord_id(&mut conn, 123456)
+            .await
+            .unwrap();
         assert!(found_before.is_some());
-        
-        UserLink::delete_by_discord_id(&mut conn, 123456).await.unwrap();
-        
-        let found_after = UserLink::find_by_discord_id(&mut conn, 123456).await.unwrap();
+
+        UserLink::delete_by_discord_id(&mut conn, 123456)
+            .await
+            .unwrap();
+
+        let found_after = UserLink::find_by_discord_id(&mut conn, 123456)
+            .await
+            .unwrap();
         assert!(found_after.is_none());
     }
 }

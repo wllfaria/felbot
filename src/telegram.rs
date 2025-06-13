@@ -15,6 +15,7 @@ pub async fn init(env: Arc<Env>, receiver: UnboundedReceiver<TelegramAction>) {
 
     let new_bot = bot.clone();
     let new_env = env.clone();
+
     tokio::spawn(async move {
         tracing::info!("Starting Telegram action processor");
         process_telegram_actions(new_env, new_bot, receiver).await;
