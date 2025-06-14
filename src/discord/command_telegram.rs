@@ -8,6 +8,10 @@ pub async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
     let user = ctx.author();
     let guild_id = ctx.guild_id();
 
+    if !ctx.data().env.discord_guild_ids.contains(&guild_id.get()) {
+        return Ok(());
+    }
+
     tracing::info!(
         user_id = %user.id,
         username = %user.name,

@@ -73,7 +73,7 @@ async fn validate_command_permissions(ctx: Context<'_>) -> Result<(), String> {
     let env = &ctx.data().env;
 
     let channel_id = ctx.channel_id();
-    if channel_id.get() != env.discord_channel_id {
+    if !env.discord_channel_ids.contains(&channel_id.get()) {
         return Err("Esse commando não pode ser usado nesse canal".to_string());
     }
 
