@@ -6,7 +6,7 @@ mod permissions;
 use std::sync::Arc;
 
 use commands::{channels, telegram};
-use error::Error;
+use error::{Error, Result};
 use poise::serenity_prelude::{self as serenity};
 
 use crate::env::Env;
@@ -61,7 +61,7 @@ async fn setup(
     ready: &serenity::Ready,
     framework: &poise::Framework<Data, Error>,
     pool: sqlx::PgPool,
-) -> Result<Data, Error> {
+) -> Result<Data> {
     tracing::info!(
         bot_username = %ready.user.name,
         bot_id = %ready.user.id,

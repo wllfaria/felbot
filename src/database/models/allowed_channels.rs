@@ -63,4 +63,18 @@ impl AllowedChannel {
 
         Ok(channel)
     }
+
+    pub async fn delete(
+        executor: &mut sqlx::PgConnection,
+        channel_id: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "DELETE FROM allowed_channels WHERE channel_id = $1",
+            channel_id
+        )
+        .execute(executor)
+        .await?;
+
+        Ok(())
+    }
 }

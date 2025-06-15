@@ -1,10 +1,10 @@
 use super::Context;
-use super::error::{Error, PermissionError};
+use super::error::{Error, PermissionError, Result};
 use crate::database::models::allowed_channels::AllowedChannel;
 use crate::database::models::allowed_guilds::AllowedGuild;
 use crate::database::models::allowed_roles::AllowedRole;
 
-async fn is_on_guild(ctx: Context<'_>) -> Result<bool, Error> {
+async fn is_on_guild(ctx: Context<'_>) -> Result<bool> {
     let Some(guild_id) = ctx.guild_id() else {
         let message = "Esse comando não pode ser usado nesse servidor".to_string();
         return Err(Error::Permission(PermissionError::new(message)));
@@ -24,7 +24,7 @@ async fn is_on_guild(ctx: Context<'_>) -> Result<bool, Error> {
     Ok(true)
 }
 
-async fn is_on_channel(ctx: Context<'_>) -> Result<bool, Error> {
+async fn is_on_channel(ctx: Context<'_>) -> Result<bool> {
     let pool = &ctx.data().pool;
     let mut conn = pool.acquire().await?;
 
@@ -39,7 +39,7 @@ async fn is_on_channel(ctx: Context<'_>) -> Result<bool, Error> {
     Ok(true)
 }
 
-pub async fn is_admin(ctx: Context<'_>) -> Result<bool, Error> {
+pub async fn is_admin(ctx: Context<'_>) -> Result<bool> {
     is_on_guild(ctx).await?;
     is_on_channel(ctx).await?;
 
@@ -61,7 +61,7 @@ pub async fn is_admin(ctx: Context<'_>) -> Result<bool, Error> {
     Ok(user_has_allowed_role)
 }
 
-pub async fn is_subscriber(ctx: Context<'_>) -> Result<bool, Error> {
+pub async fn is_subscriber(ctx: Context<'_>) -> Result<bool> {
     is_on_guild(ctx).await?;
     is_on_channel(ctx).await?;
 
