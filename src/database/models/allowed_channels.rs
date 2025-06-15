@@ -25,6 +25,20 @@ impl AllowedChannelPayload {
 }
 
 impl AllowedChannel {
+    pub async fn exists(
+        executor: &mut sqlx::PgConnection,
+        channel_id: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let exists = sqlx::query_scalar!(
+            "SELECT EXISTS(SELECT 1 FROM allowed_channels WHERE channel_id = $1)",
+            channel_id
+        )
+        .fetch_one(executor)
+        .await?;
+
+        Ok(exists.unwrap_or_default())
+    }
+
     pub async fn get_channels(executor: &mut sqlx::PgConnection) -> Result<Vec<Self>, sqlx::Error> {
         let channels = sqlx::query_as!(Self, "SELECT * FROM allowed_channels")
             .fetch_all(executor)
