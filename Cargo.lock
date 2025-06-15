@@ -674,6 +674,7 @@ dependencies = [
  "chrono",
  "derive_more 2.0.1",
  "dotenvy",
+ "futures",
  "itertools 0.14.0",
  "maud",
  "poise",

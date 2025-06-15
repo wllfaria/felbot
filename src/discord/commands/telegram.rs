@@ -1,42 +1,19 @@
 use poise::CreateReply;
 use poise::serenity_prelude::{self as serenity};
 
-use super::{Context, Error, validate_command_permissions};
+use crate::discord::Context;
+use crate::discord::error::Error;
+use crate::discord::permissions::is_subscriber;
 
-#[poise::command(slash_command)]
+#[poise::command(
+    slash_command,
+    check = "is_subscriber",
+    description_localized("pt-BR", "Inicia o processo de entrar no grupo do Telegram")
+)]
 pub async fn telegram(ctx: Context<'_>) -> Result<(), Error> {
     let user = ctx.author();
-    let guild_id = ctx.guild_id();
 
-    if !ctx.data().env.discord_guild_ids.contains(&guild_id.get()) {
-        return Ok(());
-    }
-
-    tracing::info!(
-        user_id = %user.id,
-        username = %user.name,
-        guild_id = ?guild_id,
-        "Processing /telegram command"
-    );
-
-    if let Err(error_message) = validate_command_permissions(ctx).await {
-        tracing::warn!(
-            user_id = %user.id,
-            error = %error_message,
-            "Command validation failed"
-        );
-
-        let reply = CreateReply::default()
-            .content(error_message)
-            .ephemeral(true);
-
-        ctx.send(reply).await.map_err(|e| {
-            tracing::error!(error = %e, user_id = %user.id, "Failed to send validation error response");
-            e
-        })?;
-
-        return Ok(());
-    }
+    tracing::info!(user_id = %user.id, username = %user.name, "Processing /telegram command");
 
     let author = serenity::CreateEmbedAuthor::new("felbot");
     let footer = serenity::CreateEmbedFooter::new("a carinha '-'").icon_url("https://yt3.googleusercontent.com/c0u2JGrq6Ke9i15R66z2u3RR0fY8RHFAkrocO8cGkRu2FLhke2DH_e_zjiW17_RnBHDzQw4KlA=s160-c-k-c0x00ffffff-no-rj");

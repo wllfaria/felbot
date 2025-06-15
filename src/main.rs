@@ -68,7 +68,7 @@ async fn main() {
     let (cron_sender, cron_receiver) = tokio::sync::mpsc::unbounded_channel();
 
     let mut telegram_handle = tokio::spawn(telegram::init(env.clone(), telegram_receiver));
-    let mut discord_handle = tokio::spawn(discord::init(env.clone()));
+    let mut discord_handle = tokio::spawn(discord::init(env.clone(), pool.clone()));
 
     let mut cron_handle = tokio::spawn(cron::init(
         env.clone(),

@@ -3,6 +3,7 @@ use sqlx::PgConnection;
 use sqlx::prelude::FromRow;
 use sqlx::types::Uuid;
 
+#[allow(dead_code)]
 #[derive(Debug, FromRow)]
 pub struct UserLink {
     pub id: Uuid,

@@ -1,33 +1,26 @@
-mod command_telegram;
+mod commands;
+mod error;
+mod handlers;
+mod permissions;
 
 use std::sync::Arc;
 
-use command_telegram::telegram;
+use commands::{channels, telegram};
+use error::Error;
 use poise::serenity_prelude::{self as serenity};
 
 use crate::env::Env;
 
 pub struct Data {
-    env: Arc<Env>,
+    pool: sqlx::PgPool,
 }
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
-pub async fn init(env: Arc<Env>) {
+pub async fn init(env: Arc<Env>, pool: sqlx::PgPool) {
     tracing::info!("Initializing Discord service");
 
+    let framework = create_framework(pool).await;
     let intents = serenity::GatewayIntents::non_privileged();
-
-    let options = poise::FrameworkOptions {
-        commands: vec![telegram()],
-        ..Default::default()
-    };
-
-    let env_clone = env.clone();
-    let framework = poise::Framework::builder()
-        .options(options)
-        .setup(move |ctx, ready, framework| Box::pin(setup(ctx, ready, framework, env_clone)))
-        .build();
 
     let mut client = serenity::ClientBuilder::new(&env.discord_token, intents)
         .framework(framework)
@@ -41,11 +34,33 @@ pub async fn init(env: Arc<Env>) {
     }
 }
 
+async fn create_framework(pool: sqlx::PgPool) -> poise::Framework<Data, Error> {
+    let options = poise::FrameworkOptions {
+        commands: vec![telegram(), channels()],
+        pre_command: |ctx| {
+            Box::pin(async move {
+                tracing::debug!(
+                    user = %ctx.author().name,
+                    command = %ctx.command().qualified_name,
+                    "Command executed"
+                );
+            })
+        },
+        on_error: |error| Box::pin(handlers::error_handler(error)),
+        ..Default::default()
+    };
+
+    poise::Framework::builder()
+        .options(options)
+        .setup(move |ctx, ready, framework| Box::pin(setup(ctx, ready, framework, pool)))
+        .build()
+}
+
 async fn setup(
     ctx: &serenity::Context,
     ready: &serenity::Ready,
     framework: &poise::Framework<Data, Error>,
-    env: Arc<Env>,
+    pool: sqlx::PgPool,
 ) -> Result<Data, Error> {
     tracing::info!(
         bot_username = %ready.user.name,
@@ -66,33 +81,5 @@ async fn setup(
         "Discord commands registered globally"
     );
 
-    Ok(Data { env })
-}
-
-async fn validate_command_permissions(ctx: Context<'_>) -> Result<(), String> {
-    let env = &ctx.data().env;
-
-    let channel_id = ctx.channel_id();
-    if !env.discord_channel_ids.contains(&channel_id.get()) {
-        return Err("Esse commando não pode ser usado nesse canal".to_string());
-    }
-
-    let member = match ctx.author_member().await {
-        Some(member) => member,
-        None => return Err("Não consegui verificar seus cargos".to_string()),
-    };
-
-    let user_has_allowed_role = member
-        .roles
-        .iter()
-        .any(|role_id| env.discord_allowed_roles.contains(&role_id.get()));
-
-    if !user_has_allowed_role {
-        return Err(
-            "Opa, pra entrar no grupo vc precisa ser sub na twitch ou membro no youtube"
-                .to_string(),
-        );
-    }
-
-    Ok(())
+    Ok(Data { pool })
 }
