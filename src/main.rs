@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use cron::RoleVerificationConfig;
 use env::Env;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -68,13 +69,18 @@ async fn main() {
     let (cron_sender, cron_receiver) = tokio::sync::mpsc::unbounded_channel();
 
     let mut telegram_handle = tokio::spawn(telegram::init(env.clone(), telegram_receiver));
-    let mut discord_handle = tokio::spawn(discord::init(env.clone(), pool.clone()));
+    let mut discord_handle = tokio::spawn(discord::init(
+        env.clone(),
+        pool.clone(),
+        cron_sender.clone(),
+    ));
 
     let mut cron_handle = tokio::spawn(cron::init(
         env.clone(),
         pool.clone(),
         cron_receiver,
         telegram_sender.clone(),
+        RoleVerificationConfig::default(),
     ));
 
     let mut api_handle = tokio::spawn(api::init(

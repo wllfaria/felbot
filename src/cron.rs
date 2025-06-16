@@ -13,11 +13,30 @@ use crate::error::{AppError, Result};
 use crate::messages::{CronAction, TelegramAction};
 use crate::utils::with_tx;
 
+/// Configuration for role verification service
+#[derive(Debug, Clone)]
+pub struct RoleVerificationConfig {
+    /// Delay between API calls to avoid rate limiting (in milliseconds)
+    pub api_delay_ms: u64,
+    /// How often to run the job automatically (in seconds)
+    pub schedule_interval_secs: u64,
+}
+
+impl Default for RoleVerificationConfig {
+    fn default() -> Self {
+        Self {
+            api_delay_ms: 250,
+            schedule_interval_secs: 24 * 60 * 60,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CronContext {
     env: Arc<Env>,
     pool: PgPool,
     telegram_sender: UnboundedSender<TelegramAction>,
+    config: RoleVerificationConfig,
 }
 
 pub async fn init(
@@ -25,11 +44,13 @@ pub async fn init(
     pool: PgPool,
     cron_receiver: UnboundedReceiver<CronAction>,
     telegram_sender: UnboundedSender<TelegramAction>,
+    config: RoleVerificationConfig,
 ) {
     let context = CronContext {
         env,
         pool,
         telegram_sender,
+        config,
     };
 
     tokio::spawn(manual_trigger_runner(context.clone(), cron_receiver));
@@ -40,27 +61,44 @@ async fn manual_trigger_runner(ctx: CronContext, mut cron_receiver: UnboundedRec
     while (cron_receiver.recv().await).is_some() {
         tracing::info!("executing manually triggered cron job");
         let Ok(mut conn) = ctx.pool.acquire().await else {
-            tracing::error!("faield to acquire pool connection, skipping cron job");
+            tracing::error!("failed to acquire pool connection, skipping cron job");
             continue;
         };
 
-        run_cron_job(ctx.env.clone(), conn.as_mut(), ctx.telegram_sender.clone()).await;
+        run_cron_job(
+            ctx.env.clone(),
+            conn.as_mut(),
+            ctx.telegram_sender.clone(),
+            ctx.config.clone(),
+        )
+        .await;
     }
 }
 
 async fn cron_job_runner(ctx: CronContext) {
-    const ONE_DAY_IN_SECS: u64 = 24 * 60 * 60;
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(ONE_DAY_IN_SECS));
-    tracing::info!("Cron service initialized, starting role verification scheduler");
+    let interval = tokio::time::Duration::from_secs(ctx.config.schedule_interval_secs);
+    let mut scheduler = tokio::time::interval(interval);
+
+    tracing::info!(
+        interval_secs = ctx.config.schedule_interval_secs,
+        "Role verification scheduler initialized"
+    );
 
     loop {
-        interval.tick().await;
+        scheduler.tick().await;
         let Ok(mut conn) = ctx.pool.acquire().await else {
             tracing::error!("faield to acquire pool connection, skipping cron job");
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             continue;
         };
 
-        run_cron_job(ctx.env.clone(), conn.as_mut(), ctx.telegram_sender.clone()).await;
+        run_cron_job(
+            ctx.env.clone(),
+            conn.as_mut(),
+            ctx.telegram_sender.clone(),
+            ctx.config.clone(),
+        )
+        .await;
     }
 }
 
@@ -68,12 +106,13 @@ async fn run_cron_job(
     env: Arc<Env>,
     pool: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
+    config: RoleVerificationConfig,
 ) {
     let cycle_start = Instant::now();
     tracing::info!("Starting role verification cycle");
 
     let stats = with_tx(pool, async |tx| {
-        check_user_roles(env.clone(), tx, telegram_sender).await
+        check_user_roles(env.clone(), tx, telegram_sender, config).await
     })
     .await;
 
@@ -107,6 +146,7 @@ async fn check_user_roles(
     env: Arc<Env>,
     conn: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
+    config: RoleVerificationConfig,
 ) -> Result<VerificationStats> {
     let start_time = Instant::now();
     let mut stats = VerificationStats::default();
@@ -143,11 +183,41 @@ async fn check_user_roles(
         AppError::Database(e)
     })?;
 
-    let total_users = users.len();
+    check_all_users(
+        &discord_client,
+        conn,
+        telegram_sender,
+        guild_id,
+        &allowed_roles,
+        users,
+        config.api_delay_ms,
+        &mut stats,
+    )
+    .await?;
+
+    let total_duration = start_time.elapsed();
     tracing::info!(
-        total_users = total_users,
-        "Starting role verification for all users"
+        duration_ms = total_duration.as_millis(),
+        users_checked = stats.users_checked,
+        users_removed = stats.users_removed,
+        users_failed = stats.users_failed,
+        "Role verification check completed"
     );
+
+    Ok(stats)
+}
+
+async fn check_all_users(
+    discord_client: &Http,
+    conn: &mut PgConnection,
+    telegram_sender: UnboundedSender<TelegramAction>,
+    guild_id: GuildId,
+    allowed_roles: &[u64],
+    users: Vec<UserLink>,
+    api_delay_ms: u64,
+    stats: &mut VerificationStats,
+) -> Result<()> {
+    let total_users = users.len();
 
     for (index, user) in users.into_iter().enumerate() {
         let user_start = Instant::now();
@@ -164,7 +234,7 @@ async fn check_user_roles(
 
         tracing::debug!("Checking user roles");
 
-        match has_allowed_roles(&discord_client, &allowed_roles, guild_id, &user).await {
+        match has_allowed_roles(discord_client, allowed_roles, guild_id, &user).await {
             Ok(has_roles) => {
                 let check_duration = user_start.elapsed();
                 let duration_ms = check_duration.as_millis();
@@ -210,18 +280,13 @@ async fn check_user_roles(
                 stats.users_failed += 1;
             }
         }
+
+        if index < total_users - 1 && api_delay_ms > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(api_delay_ms)).await;
+        }
     }
 
-    let total_duration = start_time.elapsed();
-    tracing::info!(
-        duration_ms = total_duration.as_millis(),
-        users_checked = stats.users_checked,
-        users_removed = stats.users_removed,
-        users_failed = stats.users_failed,
-        "Role verification check completed"
-    );
-
-    Ok(stats)
+    Ok(())
 }
 
 #[tracing::instrument(skip_all, fields(discord_id = user.discord_id))]

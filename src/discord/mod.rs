@@ -5,21 +5,24 @@ mod permissions;
 
 use std::sync::Arc;
 
-use commands::{channels, telegram};
+use commands::{channels, roles, telegram, verify_members};
 use error::{Error, Result};
 use poise::serenity_prelude::{self as serenity};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::env::Env;
+use crate::messages::CronAction;
 
 pub struct Data {
     pool: sqlx::PgPool,
+    cron_sender: UnboundedSender<CronAction>,
 }
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
-pub async fn init(env: Arc<Env>, pool: sqlx::PgPool) {
+pub async fn init(env: Arc<Env>, pool: sqlx::PgPool, cron_sender: UnboundedSender<CronAction>) {
     tracing::info!("Initializing Discord service");
 
-    let framework = create_framework(pool).await;
+    let framework = create_framework(pool, cron_sender).await;
     let intents = serenity::GatewayIntents::non_privileged();
 
     let mut client = serenity::ClientBuilder::new(&env.discord_token, intents)
@@ -34,9 +37,12 @@ pub async fn init(env: Arc<Env>, pool: sqlx::PgPool) {
     }
 }
 
-async fn create_framework(pool: sqlx::PgPool) -> poise::Framework<Data, Error> {
+async fn create_framework(
+    pool: sqlx::PgPool,
+    cron_sender: UnboundedSender<CronAction>,
+) -> poise::Framework<Data, Error> {
     let options = poise::FrameworkOptions {
-        commands: vec![telegram(), channels()],
+        commands: vec![telegram(), channels(), roles(), verify_members()],
         pre_command: |ctx| {
             Box::pin(async move {
                 tracing::debug!(
@@ -52,7 +58,9 @@ async fn create_framework(pool: sqlx::PgPool) -> poise::Framework<Data, Error> {
 
     poise::Framework::builder()
         .options(options)
-        .setup(move |ctx, ready, framework| Box::pin(setup(ctx, ready, framework, pool)))
+        .setup(move |ctx, ready, framework| {
+            Box::pin(setup(ctx, ready, framework, pool, cron_sender))
+        })
         .build()
 }
 
@@ -61,6 +69,7 @@ async fn setup(
     ready: &serenity::Ready,
     framework: &poise::Framework<Data, Error>,
     pool: sqlx::PgPool,
+    cron_sender: UnboundedSender<CronAction>,
 ) -> Result<Data> {
     tracing::info!(
         bot_username = %ready.user.name,
@@ -81,5 +90,5 @@ async fn setup(
         "Discord commands registered globally"
     );
 
-    Ok(Data { pool })
+    Ok(Data { pool, cron_sender })
 }

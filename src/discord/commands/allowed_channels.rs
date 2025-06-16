@@ -1,10 +1,10 @@
 use itertools::Itertools;
 use poise::serenity_prelude::{self as serenity};
 
+use super::validate_guild;
 use crate::database::models::allowed_channels::{AllowedChannel, AllowedChannelPayload};
-use crate::database::models::allowed_guilds::AllowedGuild;
 use crate::discord::commands::create_standard_reply;
-use crate::discord::error::{InvalidChannelError, InvalidGuildError, PermissionError, Result};
+use crate::discord::error::{InvalidChannelError, PermissionError, Result};
 use crate::discord::permissions::is_admin;
 use crate::discord::{Context, Error};
 
@@ -14,18 +14,6 @@ fn parse_channel_id(id: &str) -> Result<i64> {
         let message = "ID do canal inválido".to_string();
         Error::InvalidChannel(InvalidChannelError::new(message))
     })
-}
-
-async fn validate_guild(pool: &sqlx::PgPool, guild_id: u64) -> Result<()> {
-    let mut conn = pool.acquire().await?;
-    let allowed_guild_ids = AllowedGuild::get_guild_ids(conn.as_mut()).await?;
-
-    if !allowed_guild_ids.contains(&guild_id) {
-        let message = "Esse canal não é um canal de um servidor permitido".to_string();
-        return Err(Error::InvalidGuild(InvalidGuildError::new(message)));
-    }
-
-    Ok(())
 }
 
 async fn validate_channel(ctx: Context<'_>, channel_id: i64) -> Result<(String, u64)> {
@@ -54,8 +42,13 @@ async fn validate_channel(ctx: Context<'_>, channel_id: i64) -> Result<(String, 
     description_localized("pt-BR", "Gerenciar canais permitidos para comandos do bot")
 )]
 pub async fn channels(ctx: Context<'_>) -> Result<()> {
-    ctx.say("Please use one of the subcommands: `/canais listar` or `/canais novo`")
-        .await?;
+    let message = "Por favor, use um dos subcomandos: `/canais listar` ou `/canais novo`".into();
+    let reply = create_standard_reply(message);
+
+    ctx.send(reply).await.map_err(|e| {
+        tracing::error!(error = %e, user_id = %ctx.author().id, "Failed to send list channels command response");
+        e
+    })?;
 
     Ok(())
 }

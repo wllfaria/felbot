@@ -20,6 +20,7 @@ macro_rules! impl_error {
 impl_error!(PermissionError);
 impl_error!(InvalidChannelError);
 impl_error!(InvalidGuildError);
+impl_error!(InvalidRoleError);
 
 #[derive(Debug, DeriveError, Display, From)]
 pub enum Error {
@@ -29,6 +30,8 @@ pub enum Error {
     InvalidChannel(InvalidChannelError),
     #[display("{_0}")]
     InvalidGuild(InvalidGuildError),
+    #[display("{_0}")]
+    InvalidRole(InvalidRoleError),
     #[display("{_0}")]
     #[from]
     Discord(serenity::Error),

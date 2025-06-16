@@ -1,9 +1,16 @@
 mod allowed_channels;
+mod allowed_roles;
 mod telegram;
+mod verify_members;
 
 pub use allowed_channels::channels;
+pub use allowed_roles::roles;
 use poise::{CreateReply, serenity_prelude as serenity};
 pub use telegram::telegram;
+pub use verify_members::verify_members;
+
+use super::error::{Error, InvalidGuildError, Result};
+use crate::database::models::allowed_guilds::AllowedGuild;
 
 pub fn create_embed(description: String) -> serenity::CreateEmbed {
     let author = serenity::CreateEmbedAuthor::new("felbot");
@@ -20,4 +27,16 @@ pub fn create_embed(description: String) -> serenity::CreateEmbed {
 pub fn create_standard_reply(description: String) -> CreateReply {
     let embed = create_embed(description);
     CreateReply::default().embed(embed).ephemeral(true)
+}
+
+pub async fn validate_guild(pool: &sqlx::PgPool, guild_id: u64) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    let allowed_guild_ids = AllowedGuild::get_guild_ids(conn.as_mut()).await?;
+
+    if !allowed_guild_ids.contains(&guild_id) {
+        let message = "Esse canal não é um canal de um servidor permitido".to_string();
+        return Err(Error::InvalidGuild(InvalidGuildError::new(message)));
+    }
+
+    Ok(())
 }

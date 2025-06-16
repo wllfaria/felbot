@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS allowed_channels (
 );
 
 INSERT INTO allowed_channels (channel_id, name)
-    VALUES (1140461199553740872, 'Chat dos subs');
+    VALUES (1140461199553740872, 'Chat dos subs'),
+    (1381783902338945217, 'Teste');
 
 CREATE TABLE IF NOT EXISTS allowed_guilds (
     id uuid DEFAULT uuid_generate_v4 () PRIMARY KEY,
