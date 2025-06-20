@@ -5,6 +5,7 @@ mod verify_members;
 
 pub use allowed_channels::channels;
 pub use allowed_roles::roles;
+use chrono::Timelike;
 use poise::{CreateReply, serenity_prelude as serenity};
 pub use telegram::telegram;
 pub use verify_members::verify_members;
@@ -12,9 +13,21 @@ pub use verify_members::verify_members;
 use super::error::{Error, InvalidGuildError, Result};
 use crate::database::models::allowed_guilds::AllowedGuild;
 
+pub fn get_meiafelps_formatted_date() -> String {
+    let now = chrono::Utc::now();
+
+    let (pm, _) = now.hour12();
+    let hour = now.hour() + 24;
+    let minutes = now.minute();
+
+    let suffix = if pm { "'-'" } else { "=m" };
+    format!("{hour}:{minutes} {suffix}")
+}
+
 pub fn create_embed(description: String) -> serenity::CreateEmbed {
     let author = serenity::CreateEmbedAuthor::new("felbot");
-    let footer = serenity::CreateEmbedFooter::new("a carinha '-'")
+    let footer_message = format!("Agora são {}", get_meiafelps_formatted_date());
+    let footer = serenity::CreateEmbedFooter::new(footer_message)
         .icon_url("https://yt3.googleusercontent.com/c0u2JGrq6Ke9i15R66z2u3RR0fY8RHFAkrocO8cGkRu2FLhke2DH_e_zjiW17_RnBHDzQw4KlA=s160-c-k-c0x00ffffff-no-rj");
 
     serenity::CreateEmbed::new()

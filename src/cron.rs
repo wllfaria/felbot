@@ -168,10 +168,12 @@ async fn check_user_roles(
 
     let guild_id = GuildId::new(guild.guild_id as u64);
 
-    let allowed_roles = AllowedRole::get_role_ids(conn).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to fetch allowed roles from database");
-        AppError::Database(e)
-    })?;
+    let allowed_roles = AllowedRole::get_guild_role_ids(conn, guild.id)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to fetch allowed roles from database");
+            AppError::Database(e)
+        })?;
 
     if allowed_roles.is_empty() {
         tracing::warn!("No allowed roles found in database, skipping role verification");
