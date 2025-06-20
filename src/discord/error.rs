@@ -22,6 +22,7 @@ impl_error!(InvalidChannelError);
 impl_error!(InvalidGuildError);
 impl_error!(InvalidRoleError);
 
+#[allow(clippy::result_large_err)]
 #[derive(Debug, DeriveError, Display, From)]
 pub enum Error {
     #[display("{_0}")]
