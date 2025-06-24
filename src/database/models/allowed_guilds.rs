@@ -8,6 +8,7 @@ pub struct AllowedGuild {
     pub id: Uuid,
     pub guild_id: i64,
     pub name: String,
+    pub owner: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

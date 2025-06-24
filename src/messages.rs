@@ -1,7 +1,7 @@
 #[derive(Debug, Clone)]
 pub enum TelegramAction {
-    InviteUser { telegram_id: i64 },
-    RemoveUser { telegram_id: i64 },
+    InviteUser { id: i64, group_id: i64 },
+    RemoveUser { id: i64, group_id: i64 },
 }
 
 #[derive(Debug, Clone)]

@@ -52,3 +52,45 @@ ALTER TABLE allowed_channels
 ALTER TABLE allowed_channels
     ADD CONSTRAINT allowed_channels_guild_id_fkey FOREIGN KEY (guild_id) REFERENCES allowed_guilds (id) ON DELETE CASCADE;
 
+CREATE TABLE IF NOT EXISTS telegram_groups (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4 (),
+    owner varchar(255) NOT NULL,
+    guild_id uuid NOT NULL,
+    telegram_group_id bigint NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT NOW(),
+    updated_at timestamptz NOT NULL DEFAULT NOW(),
+    UNIQUE (guild_id, telegram_group_id)
+);
+
+ALTER TABLE allowed_guilds
+    ADD COLUMN OWNER varchar(255) NOT NULL DEFAULT 'felps';
+
+UPDATE
+    allowed_guilds
+SET
+    OWNER = 'wiru'
+WHERE
+    guild_id = 1355012226355957780;
+
+ALTER TABLE allowed_guilds
+    ALTER COLUMN OWNER DROP DEFAULT;
+
+INSERT INTO allowed_guilds (guild_id, name, owner)
+    VALUES (1125142982052560957, 'server da carol', 'carol');
+
+INSERT INTO telegram_groups (guild_id, telegram_group_id, owner)
+    VALUES (get_guild_id (258648784039313408), -1002726437061, 'felps'),
+    (get_guild_id (1125142982052560957), -1002726438061, 'carol');
+
+ALTER TABLE user_links
+    DROP COLUMN added_to_group_at;
+
+ALTER TABLE user_links
+    DROP COLUMN last_subscription_check;
+
+ALTER TABLE oauth_states
+    ADD COLUMN group_name varchar(255) NOT NULL DEFAULT 'felps';
+
+ALTER TABLE oauth_states
+    ALTER COLUMN group_name DROP DEFAULT;
+

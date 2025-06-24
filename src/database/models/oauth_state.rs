@@ -3,12 +3,15 @@ use sqlx::PgConnection;
 use sqlx::prelude::FromRow;
 use sqlx::types::Uuid;
 
+use crate::telegram::Groups;
+
 #[allow(dead_code)]
 #[derive(Debug, FromRow)]
 pub struct OAuthState {
     pub id: Uuid,
     pub state_token: String,
     pub telegram_id: i64,
+    pub group_name: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -19,12 +22,14 @@ impl OAuthState {
         executor: &mut PgConnection,
         telegram_id: i64,
         token: &str,
+        group: Groups,
     ) -> sqlx::Result<OAuthState> {
         let state = sqlx::query_as!(
             OAuthState,
-            "INSERT INTO oauth_states (state_token, telegram_id) VALUES ($1, $2) RETURNING *",
+            "INSERT INTO oauth_states (state_token, telegram_id, group_name) VALUES ($1, $2, $3) RETURNING *",
             token,
-            telegram_id
+            telegram_id,
+            group.to_string(),
         )
         .fetch_one(executor)
         .await?;
