@@ -7,6 +7,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::database::models::allowed_guilds::AllowedGuild;
 use crate::database::models::allowed_roles::AllowedRole;
+use crate::database::models::telegram_groups::TelegramGroup;
 use crate::database::models::user_links::UserLink;
 use crate::env::Env;
 use crate::error::{AppError, Result};
@@ -53,11 +54,18 @@ pub async fn init(
         config,
     };
 
-    tokio::spawn(manual_trigger_runner(context.clone(), cron_receiver));
-    cron_job_runner(context).await;
+    tokio::spawn(manual_role_verification_runner(
+        context.clone(),
+        cron_receiver,
+    ));
+
+    role_verification_runner(context).await;
 }
 
-async fn manual_trigger_runner(ctx: CronContext, mut cron_receiver: UnboundedReceiver<CronAction>) {
+async fn manual_role_verification_runner(
+    ctx: CronContext,
+    mut cron_receiver: UnboundedReceiver<CronAction>,
+) {
     while (cron_receiver.recv().await).is_some() {
         tracing::info!("executing manually triggered cron job");
         let Ok(mut conn) = ctx.pool.acquire().await else {
@@ -65,7 +73,7 @@ async fn manual_trigger_runner(ctx: CronContext, mut cron_receiver: UnboundedRec
             continue;
         };
 
-        run_cron_job(
+        run_role_verification_cycle(
             ctx.env.clone(),
             conn.as_mut(),
             ctx.telegram_sender.clone(),
@@ -75,7 +83,7 @@ async fn manual_trigger_runner(ctx: CronContext, mut cron_receiver: UnboundedRec
     }
 }
 
-async fn cron_job_runner(ctx: CronContext) {
+async fn role_verification_runner(ctx: CronContext) {
     let interval = tokio::time::Duration::from_secs(ctx.config.schedule_interval_secs);
     let mut scheduler = tokio::time::interval(interval);
 
@@ -92,7 +100,7 @@ async fn cron_job_runner(ctx: CronContext) {
             continue;
         };
 
-        run_cron_job(
+        run_role_verification_cycle(
             ctx.env.clone(),
             conn.as_mut(),
             ctx.telegram_sender.clone(),
@@ -102,7 +110,7 @@ async fn cron_job_runner(ctx: CronContext) {
     }
 }
 
-async fn run_cron_job(
+async fn run_role_verification_cycle(
     env: Arc<Env>,
     pool: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
@@ -112,7 +120,7 @@ async fn run_cron_job(
     tracing::info!("Starting role verification cycle");
 
     let stats = with_tx(pool, async |tx| {
-        check_user_roles(env.clone(), tx, telegram_sender, config).await
+        verify_all_guilds_user_roles(env.clone(), tx, telegram_sender, config).await
     })
     .await;
 
@@ -141,14 +149,21 @@ struct VerificationStats {
     users_failed: u32,
 }
 
+impl std::ops::AddAssign for VerificationStats {
+    fn add_assign(&mut self, other: Self) {
+        self.users_checked += other.users_checked;
+        self.users_removed += other.users_removed;
+        self.users_failed += other.users_failed;
+    }
+}
+
 #[tracing::instrument(skip_all)]
-async fn check_user_roles(
+async fn verify_all_guilds_user_roles(
     env: Arc<Env>,
     conn: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
     config: RoleVerificationConfig,
 ) -> Result<VerificationStats> {
-    let start_time = Instant::now();
     let mut stats = VerificationStats::default();
 
     let discord_client = Http::new(&env.discord_token);
@@ -158,39 +173,53 @@ async fn check_user_roles(
         AppError::Database(e)
     })?;
 
-    let Some(guild) = allowed_guilds
-        .iter()
-        .find(|guild| guild.name == "Server do Felpinho")
-    else {
-        tracing::warn!("No allowed guilds found in database, skipping role verification");
-        return Ok(stats);
-    };
+    for guild in allowed_guilds {
+        let guild_stats = verify_guild_user_roles(
+            &discord_client,
+            conn,
+            telegram_sender.clone(),
+            guild,
+            config.api_delay_ms,
+        )
+        .await?;
 
+        stats += guild_stats;
+    }
+
+    Ok(stats)
+}
+
+async fn verify_guild_user_roles(
+    discord_client: &Http,
+    conn: &mut PgConnection,
+    telegram_sender: UnboundedSender<TelegramAction>,
+    guild: AllowedGuild,
+    api_delay_ms: u64,
+) -> Result<VerificationStats> {
+    let start_time = Instant::now();
     let guild_id = GuildId::new(guild.guild_id as u64);
+    let mut stats = VerificationStats::default();
 
-    let allowed_roles = AllowedRole::get_role_ids(conn).await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to fetch allowed roles from database");
-        AppError::Database(e)
-    })?;
+    let allowed_roles = AllowedRole::get_guild_role_ids(conn, guild.id).await?;
 
     if allowed_roles.is_empty() {
         tracing::warn!("No allowed roles found in database, skipping role verification");
         return Ok(stats);
     }
 
-    let users = UserLink::get_all_users(conn).await.map_err(|e| {
+    let users = UserLink::get_all_guild_users(conn).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to fetch users from database");
         AppError::Database(e)
     })?;
 
-    check_all_users(
-        &discord_client,
+    verify_users_in_guild(
+        discord_client,
         conn,
         telegram_sender,
         guild_id,
         &allowed_roles,
         users,
-        config.api_delay_ms,
+        api_delay_ms,
         &mut stats,
     )
     .await?;
@@ -207,7 +236,7 @@ async fn check_user_roles(
     Ok(stats)
 }
 
-async fn check_all_users(
+async fn verify_users_in_guild(
     discord_client: &Http,
     conn: &mut PgConnection,
     telegram_sender: UnboundedSender<TelegramAction>,
@@ -234,7 +263,7 @@ async fn check_all_users(
 
         tracing::debug!("Checking user roles");
 
-        match has_allowed_roles(discord_client, allowed_roles, guild_id, &user).await {
+        match user_has_required_roles(discord_client, allowed_roles, guild_id, &user).await {
             Ok(has_roles) => {
                 let check_duration = user_start.elapsed();
                 let duration_ms = check_duration.as_millis();
@@ -252,7 +281,8 @@ async fn check_all_users(
                 // We send a message to Telegram first to kick the user before removing from DB
                 // This ensures we don't lose track of who to remove if the system crashes
                 let send_result = telegram_sender.send(TelegramAction::RemoveUser {
-                    telegram_id: user.telegram_id,
+                    id: user.telegram_id,
+                    group_id: guild_id.get() as i64,
                 });
 
                 if let Err(e) = send_result {
@@ -290,7 +320,7 @@ async fn check_all_users(
 }
 
 #[tracing::instrument(skip_all, fields(discord_id = user.discord_id))]
-async fn has_allowed_roles(
+async fn user_has_required_roles(
     http: &Http,
     allowed_roles: &[u64],
     guild_id: GuildId,

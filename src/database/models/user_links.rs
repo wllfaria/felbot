@@ -11,8 +11,6 @@ pub struct UserLink {
     pub telegram_id: i64,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub added_to_group_at: Option<DateTime<Utc>>,
-    pub last_subscription_check: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]
@@ -81,18 +79,7 @@ impl UserLink {
         Ok(user_link)
     }
 
-    pub async fn mark_added_to_group(executor: &mut PgConnection, id: &Uuid) -> sqlx::Result<()> {
-        sqlx::query!(
-            "UPDATE user_links SET added_to_group_at = NOW() WHERE id = $1",
-            id
-        )
-        .execute(executor)
-        .await?;
-
-        Ok(())
-    }
-
-    pub async fn get_all_users(executor: &mut PgConnection) -> sqlx::Result<Vec<UserLink>> {
+    pub async fn get_all_guild_users(executor: &mut PgConnection) -> sqlx::Result<Vec<UserLink>> {
         let users = sqlx::query_as!(UserLink, "SELECT * FROM user_links")
             .fetch_all(executor)
             .await?;

@@ -1,8 +1,10 @@
 use itertools::Itertools;
 use poise::serenity_prelude::{self as serenity};
+use uuid::Uuid;
 
 use super::validate_guild;
 use crate::database::models::allowed_channels::{AllowedChannel, AllowedChannelPayload};
+use crate::database::models::allowed_guilds::AllowedGuild;
 use crate::discord::commands::create_standard_reply;
 use crate::discord::error::{InvalidChannelError, PermissionError, Result};
 use crate::discord::permissions::is_admin;
@@ -60,7 +62,15 @@ pub async fn channels(ctx: Context<'_>) -> Result<()> {
     description_localized("pt-BR", "Lista todos os canais permitidos para uso do bot")
 )]
 async fn list_channels(ctx: Context<'_>) -> Result<()> {
-    let formatted_channels = list_channels_inner(&ctx.data().pool).await?;
+    // Safety: we check if we are on a guild in the is_admin check handler above
+    let pool = &ctx.data().pool;
+    let mut conn = pool.acquire().await?;
+
+    let guid_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = AllowedGuild::get_guild_id(conn.as_mut(), guid_id).await?;
+
+    let allowed_channels = list_channels_inner(conn.as_mut(), guild_id).await?;
+    let formatted_channels = format_allowed_channels(allowed_channels)?;
     let reply = create_standard_reply(formatted_channels);
 
     ctx.send(reply).await.map_err(|e| {
@@ -71,10 +81,16 @@ async fn list_channels(ctx: Context<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn list_channels_inner(pool: &sqlx::PgPool) -> Result<String> {
-    let mut conn = pool.acquire().await?;
-    let allowed_channels = AllowedChannel::get_channels(conn.as_mut()).await?;
+async fn list_channels_inner(
+    conn: &mut sqlx::PgConnection,
+    guild_id: Uuid,
+) -> Result<Vec<AllowedChannel>> {
+    let allowed_channels = AllowedChannel::get_guild_channels(conn, guild_id).await?;
+    Ok(allowed_channels)
+}
 
+#[allow(clippy::result_large_err)]
+fn format_allowed_channels(allowed_channels: Vec<AllowedChannel>) -> Result<String> {
     if allowed_channels.is_empty() {
         return Ok("Nenhum canal na lista de canais permitidos".to_string());
     }
@@ -98,9 +114,17 @@ async fn add_channel(
     ctx: Context<'_>,
     #[description = "ID do canal para adicionar"] id: String,
 ) -> Result<()> {
+    let pool = &ctx.data().pool;
+    let mut conn = pool.acquire().await?;
+
+    // Safety: we check if we are on a guild in the is_admin check handler above
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = AllowedGuild::get_guild_id(conn.as_mut(), guild_id).await?;
+
     let channel_id = parse_channel_id(&id)?;
     let channel_name = get_channel_name(ctx, channel_id).await?;
-    let new_channel = add_channel_inner(&ctx.data().pool, channel_id, channel_name).await?;
+
+    let new_channel = add_channel_inner(conn.as_mut(), channel_id, channel_name, guild_id).await?;
     let description = format!(
         "Canal adicionado com sucesso!\n\n**ID:** {}\n**Nome:** {}",
         new_channel.channel_id, new_channel.name
@@ -114,16 +138,20 @@ async fn add_channel(
     Ok(())
 }
 
-async fn add_channel_inner(pool: &sqlx::PgPool, id: i64, name: String) -> Result<AllowedChannel> {
-    let mut conn = pool.acquire().await?;
-    let exists = AllowedChannel::exists(conn.as_mut(), id).await?;
+async fn add_channel_inner(
+    conn: &mut sqlx::PgConnection,
+    id: i64,
+    name: String,
+    guild_id: Uuid,
+) -> Result<AllowedChannel> {
+    let exists = AllowedChannel::exists(conn, id, guild_id).await?;
     if exists {
         let message = "Canal já existe na lista".to_string();
         return Err(Error::Permission(PermissionError::new(message)));
     }
 
-    let payload = AllowedChannelPayload::new(id, name);
-    let new_channel = AllowedChannel::create(conn.as_mut(), payload).await?;
+    let payload = AllowedChannelPayload::new(id, name, guild_id);
+    let new_channel = AllowedChannel::create(conn, payload).await?;
     Ok(new_channel)
 }
 
@@ -137,7 +165,14 @@ pub async fn del_channel(
     ctx: Context<'_>,
     #[description = "ID do canal para remover"] id: String,
 ) -> Result<()> {
-    let channel_id = del_channel_inner(&ctx.data().pool, id).await?;
+    let pool = &ctx.data().pool;
+    let mut conn = pool.acquire().await?;
+
+    // Safety: we check if we are on a guild in the is_admin check handler above
+    let guild_id = ctx.guild_id().unwrap().get() as i64;
+    let guild_id = AllowedGuild::get_guild_id(conn.as_mut(), guild_id).await?;
+
+    let channel_id = del_channel_inner(conn.as_mut(), id, guild_id).await?;
     let channel_name = get_channel_name(ctx, channel_id).await?;
     let description =
         format!("Canal removido com sucesso!\n\nID: {channel_id}\nNome: {channel_name}");
@@ -150,17 +185,20 @@ pub async fn del_channel(
     Ok(())
 }
 
-async fn del_channel_inner(pool: &sqlx::PgPool, id: String) -> Result<i64> {
+async fn del_channel_inner(
+    conn: &mut sqlx::PgConnection,
+    id: String,
+    guild_id: Uuid,
+) -> Result<i64> {
     let channel_id = parse_channel_id(&id)?;
-    let mut conn = pool.acquire().await?;
 
-    let exists = AllowedChannel::exists(conn.as_mut(), channel_id).await?;
+    let exists = AllowedChannel::exists(conn, channel_id, guild_id).await?;
     if !exists {
         let message = "Canal não encontrado na lista".to_string();
         return Err(Error::Permission(PermissionError::new(message)));
     }
 
-    AllowedChannel::delete(conn.as_mut(), channel_id).await?;
+    AllowedChannel::delete(conn, channel_id).await?;
     Ok(channel_id)
 }
 
@@ -173,43 +211,236 @@ async fn get_channel_name(ctx: Context<'_>, channel_id: i64) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::models::allowed_guilds::AllowedGuildPayload;
 
-    async fn setup_test_data(pool: &sqlx::PgPool) -> Result<i64> {
-        // Create test channel
-        let mut conn = pool.acquire().await?;
-        let test_id = 999999;
-        let payload = AllowedChannelPayload::new(test_id, "Test Channel".to_string());
-        let _ = AllowedChannel::create(conn.as_mut(), payload).await?;
-        Ok(test_id)
-    }
+    #[sqlx::test]
+    async fn test_list_channels_only_for_guild(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
 
-    async fn cleanup_test_data(pool: &sqlx::PgPool, id: i64) -> Result<()> {
-        let mut conn = pool.acquire().await?;
-        AllowedChannel::delete(conn.as_mut(), id).await?;
-        Ok(())
+        let mut guilds = vec![];
+        for i in 0..2 {
+            let guild = AllowedGuild::create(
+                conn.as_mut(),
+                AllowedGuildPayload::new(i, format!("Test Guild {i}")),
+            )
+            .await
+            .unwrap();
+
+            for j in 1..10 {
+                let channel_payload = AllowedChannelPayload::new(
+                    i + j,
+                    format!("Test Channel {j} - guild {i}"),
+                    guild.id,
+                );
+                AllowedChannel::create(conn.as_mut(), channel_payload)
+                    .await
+                    .unwrap();
+            }
+
+            guilds.push(guild);
+        }
+
+        let channels = list_channels_inner(conn.as_mut(), guilds[0].id)
+            .await
+            .unwrap();
+
+        assert!(channels.len() == 9);
     }
 
     #[sqlx::test]
-    async fn test_list_channels_with_data(pool: sqlx::PgPool) {
-        let test_id = setup_test_data(&pool).await.unwrap();
-        let channels = list_channels_inner(&pool).await.unwrap();
-        assert!(channels.contains(&format!("{} - Test Channel", test_id)));
-        cleanup_test_data(&pool, test_id).await.unwrap();
-    }
+    fn test_list_channels_empty_guild(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
 
-    #[sqlx::test]
-    fn test_list_channels(pool: sqlx::PgPool) {
-        let channels = list_channels_inner(&pool).await.unwrap();
-        assert!(!channels.is_empty());
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(1, "Test Guild".to_string()),
+        )
+        .await
+        .unwrap();
+
+        for j in 1..10 {
+            AllowedChannel::create(
+                conn.as_mut(),
+                AllowedChannelPayload::new(j, format!("Test Channel {j}"), guild.id),
+            )
+            .await
+            .unwrap();
+        }
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(2, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert!(channels.is_empty());
     }
 
     #[sqlx::test]
     fn test_add_channel(pool: sqlx::PgPool) {
-        let channel_id = add_channel_inner(&pool, 1000, "Teste".to_string())
+        let mut conn = pool.acquire().await.unwrap();
+
+        // unrelated guild to check if we are not adding the channel to the wrong guild
+        let unrelated = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(1, "Test Guild".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(2, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let channel = add_channel_inner(conn.as_mut(), 1000, "Teste".to_string(), guild.id)
             .await
             .unwrap();
-        assert_eq!(channel_id.channel_id, 1000);
-        assert_eq!(channel_id.name, "Teste");
+
+        assert_eq!(channel.channel_id, 1000);
+        assert_eq!(channel.name, "Teste");
+        assert_eq!(channel.guild_id, guild.id);
+
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].channel_id, 1000);
+
+        let unrelated_channels = list_channels_inner(conn.as_mut(), unrelated.id)
+            .await
+            .unwrap();
+        assert!(unrelated_channels.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_delete_channel_not_found_on_guild(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(2, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        // create a channel that should not be deleted, as it does not exist on the guild but is on
+        // the same guild
+        AllowedChannel::create(
+            conn.as_mut(),
+            AllowedChannelPayload::new(1000, "Test Channel".to_string(), guild.id),
+        )
+        .await
+        .unwrap();
+
+        let result = del_channel_inner(conn.as_mut(), "9999".to_string(), guild.id).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Canal não encontrado na lista"
+        );
+
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert!(channels.len() == 1);
+    }
+
+    #[sqlx::test]
+    async fn test_delete_channel_found_but_not_on_guild(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+
+        let unrelated = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(1, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(2, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        // create a channel that exists but not on the guild we are trying to delete, so it should
+        // error
+        AllowedChannel::create(
+            conn.as_mut(),
+            AllowedChannelPayload::new(1000, "Test Channel".to_string(), unrelated.id),
+        )
+        .await
+        .unwrap();
+
+        let result = del_channel_inner(conn.as_mut(), "1000".to_string(), guild.id).await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Canal não encontrado na lista"
+        );
+
+        let channels = list_channels_inner(conn.as_mut(), unrelated.id)
+            .await
+            .unwrap();
+        assert!(channels.len() == 1);
+
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert!(channels.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_delete_channel(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(2, "Test Guild 2".to_string()),
+        )
+        .await
+        .unwrap();
+
+        AllowedChannel::create(
+            conn.as_mut(),
+            AllowedChannelPayload::new(1000, "Test Channel".to_string(), guild.id),
+        )
+        .await
+        .unwrap();
+
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert!(!channels.is_empty());
+
+        let result = del_channel_inner(conn.as_mut(), "1000".to_string(), guild.id).await;
+        assert!(result.is_ok());
+
+        let channels = list_channels_inner(conn.as_mut(), guild.id).await.unwrap();
+        assert!(channels.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_add_duplicate_channel(pool: sqlx::PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+
+        let guild = AllowedGuild::create(
+            conn.as_mut(),
+            AllowedGuildPayload::new(1, "Test Guild".to_string()),
+        )
+        .await
+        .unwrap();
+
+        AllowedChannel::create(
+            conn.as_mut(),
+            AllowedChannelPayload::new(1000, "Test Channel".to_string(), guild.id),
+        )
+        .await
+        .unwrap();
+
+        let result =
+            add_channel_inner(conn.as_mut(), 1000, "Test Channel".to_string(), guild.id).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Canal já existe na lista");
     }
 
     #[test]
@@ -223,27 +454,5 @@ mod tests {
     fn test_parse_channel_id_invalid() {
         let result = parse_channel_id("not-a-number");
         assert!(result.is_err());
-    }
-
-    #[sqlx::test]
-    async fn test_channel_not_found(pool: sqlx::PgPool) {
-        let non_existent_id = 9999999;
-        let result = del_channel_inner(&pool, non_existent_id.to_string()).await;
-        assert!(result.is_err());
-    }
-
-    #[sqlx::test]
-    async fn test_add_duplicate_channel(pool: sqlx::PgPool) {
-        let test_id = 12345;
-        let test_name = "Duplicate Test".to_string();
-
-        let _ = add_channel_inner(&pool, test_id, test_name.clone())
-            .await
-            .unwrap();
-
-        let result = add_channel_inner(&pool, test_id, test_name.clone()).await;
-        assert!(result.is_err());
-
-        let _ = del_channel_inner(&pool, test_id.to_string()).await.unwrap();
     }
 }

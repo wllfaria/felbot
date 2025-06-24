@@ -1,21 +1,24 @@
+use std::str::FromStr;
+
 use axum::extract::{Query, State};
 use axum::response::{Html, Redirect};
 use serde::Deserialize;
 use sqlx::PgConnection;
-use validator::Validate;
 
 use super::AppState;
 use super::error::{ApiError, Result};
 use crate::database::models::oauth_state::OAuthState;
+use crate::database::models::telegram_groups::TelegramGroup;
 use crate::database::models::user_links::{UserLink, UserLinkPayload};
 use crate::messages::TelegramAction;
 use crate::services::discord::DiscordService;
+use crate::telegram::Groups;
 use crate::templates::oauth_success_page;
 
-#[derive(Debug, Deserialize, Validate)]
+#[derive(Debug, Deserialize)]
 pub struct OAuthStartQueryParams {
-    #[validate(range(min = 1))]
     pub telegram_id: i64,
+    pub group: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,10 +34,12 @@ pub async fn oauth_start(
 ) -> Result<Redirect> {
     tracing::info!("Starting OAuth flow");
 
-    if params.validate().is_err() {
-        let message = String::from("invalid discord id for oauth flow");
-        tracing::warn!("{message}");
-        return Err(ApiError::BadRequest { message });
+    let group = match Groups::from_str(&params.group) {
+        Ok(group) => group,
+        Err(e) => {
+            tracing::error!(error = %e, "Invalid group");
+            return Err(ApiError::BadRequest { message: e });
+        }
     };
 
     let mut tx = match state.pool.acquire().await {
@@ -60,7 +65,7 @@ pub async fn oauth_start(
     }
 
     let token = uuid::Uuid::new_v4().to_string();
-    if let Err(e) = OAuthState::create(tx.as_mut(), params.telegram_id, &token).await {
+    if let Err(e) = OAuthState::create(tx.as_mut(), params.telegram_id, &token, group).await {
         tracing::error!(error = %e, "Failed to create OAuth state");
         return Err(ApiError::Database(e));
     }
@@ -118,8 +123,15 @@ pub async fn oauth_callback(
         return Err(e);
     }
 
-    let user_link = create_user_link(tx.as_mut(), discord_id, telegram_id).await?;
-    let action = TelegramAction::InviteUser { telegram_id };
+    let group =
+        Groups::from_str(&oauth_state.group_name).expect("invalid group stored in database");
+    let group = TelegramGroup::find_by_name(tx.as_mut(), group).await?;
+
+    create_user_link(tx.as_mut(), discord_id, telegram_id).await?;
+    let action = TelegramAction::InviteUser {
+        id: telegram_id,
+        group_id: group.telegram_group_id,
+    };
 
     match state.telegram_sender.send(action) {
         Ok(_) => tracing::info!(telegram_id = %telegram_id, "Sent telegram invite action"),
@@ -128,11 +140,6 @@ pub async fn oauth_callback(
             telegram_id = %telegram_id,
             "Failed to send telegram invite action"
         ),
-    }
-
-    if let Err(e) = UserLink::mark_added_to_group(tx.as_mut(), &user_link.id).await {
-        tracing::error!(error = %e, "Failed to mark user as added to group");
-        return Err(ApiError::Database(e));
     }
 
     tracing::info!(
@@ -302,7 +309,10 @@ mod tests {
     async fn test_invalid_telegram_id(pool: PgPool) {
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: -1 },
+            OAuthStartQueryParams {
+                telegram_id: -1,
+                group: "test".to_string(),
+            },
             MockDiscordService::new(),
         );
 
@@ -320,7 +330,10 @@ mod tests {
     async fn test_successful_redirect(pool: PgPool) {
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 123 },
+            OAuthStartQueryParams {
+                telegram_id: 123,
+                group: "test".to_string(),
+            },
             MockDiscordService::new(),
         );
 
@@ -336,7 +349,10 @@ mod tests {
 
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 456 },
+            OAuthStartQueryParams {
+                telegram_id: 456,
+                group: "test".to_string(),
+            },
             MockDiscordService::new(),
         );
 
@@ -349,11 +365,16 @@ mod tests {
     async fn test_successful_callback(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
         let token = "test_token".to_string();
-        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+        OAuthState::create(&mut conn, 123, &token, Groups::Felps)
+            .await
+            .unwrap();
 
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 123 },
+            OAuthStartQueryParams {
+                telegram_id: 123,
+                group: "test".to_string(),
+            },
             MockDiscordService::new(),
         );
 
@@ -375,7 +396,10 @@ mod tests {
     async fn test_invalid_state(pool: PgPool) {
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 123 },
+            OAuthStartQueryParams {
+                telegram_id: 123,
+                group: "test".to_string(),
+            },
             MockDiscordService::new(),
         );
 
@@ -396,11 +420,16 @@ mod tests {
     async fn test_discord_token_failure(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
         let token = "test_token".to_string();
-        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+        OAuthState::create(&mut conn, 123, &token, Groups::Felps)
+            .await
+            .unwrap();
 
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 123 },
+            OAuthStartQueryParams {
+                telegram_id: 123,
+                group: "felps".to_string(),
+            },
             MockDiscordService::new().with_failing_token(),
         );
 
@@ -421,11 +450,16 @@ mod tests {
     async fn test_user_info_failure(pool: PgPool) {
         let mut conn = pool.acquire().await.unwrap();
         let token = "test_token".to_string();
-        OAuthState::create(&mut conn, 123, &token).await.unwrap();
+        OAuthState::create(&mut conn, 123, &token, Groups::Felps)
+            .await
+            .unwrap();
 
         let setup = setup_test(
             pool,
-            OAuthStartQueryParams { telegram_id: 123 },
+            OAuthStartQueryParams {
+                telegram_id: 123,
+                group: "test".to_string(),
+            },
             MockDiscordService::new().with_failing_user_info(),
         );
 

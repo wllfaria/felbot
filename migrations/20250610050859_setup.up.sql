@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS user_links (
     id uuid DEFAULT uuid_generate_v4 () PRIMARY KEY,
     discord_id bigint NOT NULL UNIQUE,
     telegram_id bigint NOT NULL UNIQUE,
-    added_to_group_at timestamp with time zone,
+    added_to_group_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT NOW(),
     updated_at timestamptz NOT NULL DEFAULT NOW(),
     last_subscription_check timestamptz

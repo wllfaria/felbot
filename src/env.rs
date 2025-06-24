@@ -16,8 +16,6 @@ pub struct Env {
     pub discord_client_id: String,
     pub discord_client_secret: String,
     pub discord_oauth_redirect: String,
-
-    pub telegram_group_id: i64,
 }
 
 impl Env {
@@ -32,10 +30,6 @@ impl Env {
         let discord_client_secret = env!("DISCORD_CLIENT_SECRET");
         let discord_oauth_redirect = env!("DISCORD_OAUTH_REDIRECT");
 
-        let telegram_group_id = env!("TELEGRAM_GROUP_ID")
-            .parse::<i64>()
-            .expect("TELEGRAM_GROUP_ID must be an integer");
-
         Self {
             port,
             database_url,
@@ -45,7 +39,6 @@ impl Env {
             discord_client_id,
             discord_client_secret,
             discord_oauth_redirect,
-            telegram_group_id,
         }
     }
 
@@ -60,7 +53,6 @@ impl Env {
             discord_client_id: Default::default(),
             discord_client_secret: Default::default(),
             discord_oauth_redirect: Default::default(),
-            telegram_group_id: Default::default(),
         }
     }
 }
